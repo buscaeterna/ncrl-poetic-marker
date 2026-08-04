@@ -5,6 +5,7 @@ import { decodeCorpus, encodeCorpus, exportCorpusBytes, exportPoem, importCorpus
 import { loadWorkspace, saveWorkspace } from "./corpus-db";
 import { RawImportDialog } from "./raw-import-dialog";
 import { PdfImportDialog } from "./pdf-import-dialog";
+import { persistPdfProjectImport } from "./pdf-project-import";
 import { createRawTextImport, finalizeRawTextImport, type RawTextImportDraft } from "./raw-text";
 import { ruleById, validateAnnotation } from "./annotation-rules";
 import { RuntimeIndicator } from "./runtime-indicator";
@@ -423,11 +424,11 @@ export default function Home() {
 
   const persistImportedWorkspace = async (newCorpora: ImportedCorpus[], newPoems: ImportedPoem[]) => {
     if (!serverProject) throw new Error("Серверный проект не открыт");
-    const workspace = {corpora:[...corpora,...newCorpora], poems:[...poems,...newPoems], activeId:newPoems[0]?.id??activeId, queue:[...queue,...newPoems.map(p=>p.id)]};
-    const response=await fetch(`/api/v1/projects/${serverProject.id}`,{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({name:serverProject.name,schema_version:serverProject.schema_version,revision:serverProject.revision,workspace})});
-    if(response.status===409) throw new Error("Конфликт revision проекта: откройте свежую серверную версию и повторите импорт");
-    if(!response.ok) throw new Error("Не удалось сохранить импорт в серверном проекте");
-    setServerProject(await response.json()); setCorpora(workspace.corpora);setPoems(workspace.poems);setQueue(workspace.queue);
+    const sourceDocumentId=newPoems[0]?.provenance?.sourceDocumentId;
+    if(!sourceDocumentId)throw new Error("PDF provenance отсутствует");
+    const result=await persistPdfProjectImport({project:serverProject,baseWorkspace:{corpora,poems,activeId,queue},corpora:newCorpora,poems:newPoems,sourceDocumentId});
+    const workspace=result.workspace;
+    setServerProject(result.project as ServerProject); setCorpora(workspace.corpora);setPoems(workspace.poems);setQueue(workspace.queue);
     if(newPoems[0]){setActiveId(newPoems[0].id);setDoc(poemToDocument(newPoems[0]));setSelected(0)}
   };
 

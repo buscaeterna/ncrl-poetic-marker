@@ -1,6 +1,7 @@
 import signal
 import time
 from datetime import timedelta
+from uuid import UUID
 
 from sqlalchemy import select
 
@@ -93,17 +94,20 @@ def process_one() -> bool:
 def process_page_ocr(job_id) -> None:
     with SessionLocal.begin() as db:
         job=db.get(Job,job_id); payload=dict(job.result or {})
-        document=db.get(SourceDocument,payload.get("document_id"))
+        document_id=UUID(payload["document_id"])
+        document=db.get(SourceDocument,document_id)
         page=db.scalar(select(SourcePage).where(SourcePage.document_id==document.id,SourcePage.page_number==payload.get("page_number"))) if document else None
         if not document or not page: raise ValueError("OCR page no longer exists")
+        if document.status != "review": raise ValueError("document left review before OCR started")
         if page.revision != payload.get("expected_revision"): raise ValueError("page revision changed before OCR started")
         path=safe_path(document.storage_key); preview=safe_path(page.preview_key)
     result=extract_page(path,page.page_number,preview,True)
     with SessionLocal.begin() as db:
-        job=db.get(Job,job_id); page=db.get(SourcePage,page.id)
+        job=db.get(Job,job_id); page=db.get(SourcePage,page.id); document=db.get(SourceDocument,document.id)
         if job.status==JobStatus.cancel_requested:
             job.status=JobStatus.cancelled;job.finished_at=utcnow();return
         if page.revision != payload["expected_revision"]: raise ValueError("page revision changed during OCR")
+        if document.status != "review": raise ValueError("document left review before OCR result could be saved")
         # Manual edited_text and selected method deliberately remain untouched.
         page.ocr_text=result["ocr"];page.confidence=result["confidence"];page.warnings=result["warnings"];page.revision+=1
         job.status=JobStatus.succeeded;job.progress=1;job.finished_at=job.updated_at=utcnow()

@@ -10,8 +10,4 @@ export const jobMatchesPage = (job: TrackedOcrJob | null, documentId: string, pa
   Boolean(job && job.documentId === documentId && job.pageNumber === pageNumber);
 export const clearCancelledPdfImport = () => ({ pendingRawImport: null, pendingPdfSource: null });
 export const canImportPdf = (status: string) => status === "review" || status === "approved";
-export function projectSaveOutcome<T>(prepared: T, responseStatus: number) {
-  return responseStatus >= 200 && responseStatus < 300
-    ? { prepared: null, committed: prepared, retryable: false }
-    : { prepared, committed: null, retryable: true };
-}
+export const trackOcrJob = (jobs:Record<string,TrackedOcrJob>, job:TrackedOcrJob) => ({...jobs,[`${job.documentId}:${job.pageNumber}`]:job});

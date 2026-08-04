@@ -1,3 +1,4 @@
+import pytest
 import io
 from pypdf import PdfWriter
 from fastapi.testclient import TestClient
@@ -69,3 +70,35 @@ def test_approved_document_is_immutable_but_remains_downloadable():
     assert client.patch(f"/api/v1/sources/{did}/pages/1",json={"revision":revision,"edited_text":"changed"}).status_code==409
     assert client.post(f"/api/v1/sources/{did}/pages/1/ocr?revision={revision}").status_code==409
     assert client.get(f"/api/v1/sources/{did}/text").text=="checked"
+
+def test_active_page_ocr_blocks_document_approval():
+    from app.database import SessionLocal
+    from app.models import Job, Project, SourceDocument, SourcePage
+    import uuid
+    with SessionLocal.begin() as db:
+        project=Project(name="race",schema_version=1,workspace=workspace());db.add(project);db.flush()
+        doc=SourceDocument(project_id=project.id,original_name="race.pdf",storage_key=f"{uuid.uuid4()}/race.pdf",mime_type="application/pdf",size=1,sha256="0"*64,upload_order=0,page_count=1,status="review");db.add(doc);db.flush()
+        page=SourcePage(document_id=doc.id,page_number=1,method="ocr",raw_text="raw",edited_text="checked",ocr_text="raw",warnings=[],review_status="approved");db.add(page)
+        db.add(Job(project_id=project.id,type="pdf_page_ocr",result={"document_id":str(doc.id),"page_number":1,"expected_revision":1}));did=doc.id
+    response=client.post(f"/api/v1/sources/{did}/approve")
+    assert response.status_code==409 and response.json()["detail"]["code"]=="page_ocr_active"
+
+def test_worker_does_not_write_ocr_after_document_leaves_review(tmp_path,monkeypatch):
+    from app.database import SessionLocal
+    from app.models import Job,JobStatus,Project,SourceDocument,SourcePage
+    from app.worker import process_page_ocr
+    import uuid
+    monkeypatch.setattr("app.settings.settings.files_dir",str(tmp_path))
+    with SessionLocal.begin() as db:
+        project=Project(name="race",schema_version=1,workspace=workspace());db.add(project);db.flush()
+        doc=SourceDocument(project_id=project.id,original_name="race.pdf",storage_key=f"{uuid.uuid4()}/race.pdf",mime_type="application/pdf",size=1,sha256="0"*64,upload_order=0,page_count=1,status="review");db.add(doc);db.flush()
+        page=SourcePage(document_id=doc.id,page_number=1,method="embedded_text",raw_text="before",edited_text="manual",ocr_text=None,warnings=[],review_status="approved",preview_key=f"{doc.id}/preview.png");db.add(page);db.flush()
+        job=Job(project_id=project.id,type="pdf_page_ocr",status=JobStatus.running,result={"document_id":str(doc.id),"page_number":1,"expected_revision":page.revision});db.add(job);db.flush();did,pid,jid=doc.id,page.id,job.id
+    def finish_after_approval(*_args,**_kwargs):
+        with SessionLocal.begin() as db: db.get(SourceDocument,did).status="approved"
+        return {"ocr":"late","confidence":99,"warnings":[],"text":"late","method":"ocr","embedded":"","rotation":0}
+    monkeypatch.setattr("app.worker.extract_page",finish_after_approval)
+    with pytest.raises(ValueError,match="left review"):
+        process_page_ocr(jid)
+    with SessionLocal() as db:
+        page=db.get(SourcePage,pid);assert page.ocr_text is None and page.edited_text=="manual" and page.revision==1

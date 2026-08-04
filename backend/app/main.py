@@ -104,6 +104,9 @@ def document_json(doc: SourceDocument, pages=False, db: Session | None = None):
     if db and doc.extraction_job_id:
         job = db.get(Job, doc.extraction_job_id)
         if job: data["job"] = {"id": job.id, "status": job.status.value, "progress": job.progress, "error": job.error}
+    if db:
+        active_ocr = db.scalars(select(Job).where(Job.project_id == doc.project_id, Job.type == "pdf_page_ocr", Job.status.in_([JobStatus.queued, JobStatus.running, JobStatus.cancel_requested]))).all()
+        data["ocr_jobs"] = [{"id": job.id, "status": job.status.value, "progress": job.progress, "error": job.error, "document_id": job.result.get("document_id"), "page_number": job.result.get("page_number")} for job in active_ocr if job.result and job.result.get("document_id") == str(doc.id)]
     if pages: data["pages"] = [{"id": p.id, "page_number": p.page_number, "method": p.method, "raw_text": p.raw_text, "edited_text": p.edited_text, "embedded_text": p.embedded_text, "ocr_text": p.ocr_text, "confidence": p.confidence, "warnings": p.warnings, "review_status": p.review_status, "rotation": p.rotation, "revision": p.revision} for p in doc.pages]
     return data
 
@@ -177,6 +180,8 @@ def approve_source(document_id: UUID, db: Session = Depends(database)):
     if doc.extraction_job_id:
         job=db.get(Job,doc.extraction_job_id)
         if job and job.status in {JobStatus.queued,JobStatus.running,JobStatus.cancel_requested}: raise HTTPException(409, detail={"code":"job_active","message":"Extraction job is still active"})
+    active_page_ocr = db.scalars(select(Job).where(Job.project_id == doc.project_id, Job.type == "pdf_page_ocr", Job.status.in_([JobStatus.queued, JobStatus.running, JobStatus.cancel_requested]))).all()
+    if any(job.result and job.result.get("document_id") == str(doc.id) for job in active_page_ocr): raise HTTPException(409, detail={"code":"page_ocr_active","message":"Wait for or cancel active page OCR before approving the document"})
     doc.status = "approved"; doc.revision += 1; db.commit(); return document_json(doc, True)
 
 @app.get("/api/v1/sources/{document_id}/preview/{page_number}", tags=["PDF sources"])
