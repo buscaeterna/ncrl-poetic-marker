@@ -9,7 +9,8 @@ from .database import SessionLocal
 from .models import Job, JobStatus, Project, SourceDocument, SourcePage, utcnow
 from .pdf import extract_page, safe_path
 from .settings import settings
-from .stress import DeterministicProvider, analyse_line
+from .stress import analyse_line
+from .model import get_spec, load_provider
 
 stopping = False
 
@@ -96,30 +97,34 @@ def process_one() -> bool:
     return True
 
 def process_stress(job_id) -> None:
-    provider=DeterministicProvider()
     with SessionLocal() as db:
         job=db.get(Job,job_id); project=db.get(Project,job.project_id); payload=dict(job.result or {})
         if not project or project.revision != payload.get("workspace_revision"):
             raise ValueError("workspace revision changed before stress analysis")
         selected=set(payload["poem_ids"])
+        selected_lines=set(payload.get("line_ids") or [])
+        spec=get_spec(payload["model_id"],payload["model_version"])
         # Preserve workspace order, never request order.
         work=[(p.get("id"), line.get("id"), line.get("text", ""))
               for p in project.workspace.get("poems",[]) if str(p.get("id")) in selected
-              for line in p.get("lines",[])]
+              for line in p.get("lines",[]) if not selected_lines or str(line.get("id")) in selected_lines]
+    provider=load_provider(spec)
     results={}; uncertain=0
     for index,(poem_id,line_id,text) in enumerate(work):
         with SessionLocal.begin() as db:
             job=db.get(Job,job_id)
             if stopping or job.status==JobStatus.cancel_requested:
                 job.status=JobStatus.cancelled;job.finished_at=utcnow();return
-        suggestion=analyse_line(text,provider);suggestion["analysed_at"]=utcnow().isoformat()
+        suggestion=analyse_line(text,provider);suggestion["analysedAt"]=utcnow().isoformat()
         results.setdefault(str(poem_id),{})[str(line_id)]=suggestion
-        uncertain += len(suggestion["uncertain_words"])
+        uncertain += len(suggestion["uncertainWords"])
         with SessionLocal.begin() as db:
             job=db.get(Job,job_id);job.progress=(index+1)/max(1,len(work));job.updated_at=utcnow()
             job.result={**payload,"processed_lines":index+1,"uncertain_words":uncertain}
     with SessionLocal.begin() as db:
         job=db.get(Job,job_id);project=db.get(Project,job.project_id)
+        if stopping or job.status==JobStatus.cancel_requested:
+            job.status=JobStatus.cancelled;job.finished_at=utcnow();return
         if project.revision != payload["workspace_revision"]:
             job.status=JobStatus.failed;job.error="workspace revision changed during stress analysis";job.finished_at=utcnow();return
         workspace=dict(project.workspace); poems=[]

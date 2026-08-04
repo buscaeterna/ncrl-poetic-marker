@@ -18,12 +18,14 @@ class CapabilitiesResponse(BaseModel):
     ocr: bool = True
     stress: bool = True
     meter: bool = False
-    local_model: bool = True
+    local_model: bool = False
 
 class StressJobCreate(BaseModel):
     poem_ids: list[str] = Field(min_length=1)
+    line_ids: list[str] | None = None
     revision: int = Field(ge=1)
-    model_version: str = "ncrl-test-dictionary:1"
+    model_id: str
+    model_version: str
 
 
 class Workspace(BaseModel):

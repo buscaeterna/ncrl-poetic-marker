@@ -9,8 +9,10 @@ from hashlib import sha256
 from typing import Protocol
 import re
 
-WORD = re.compile(r"[А-Яа-яЁёІіѢѣ]+(?:-[А-Яа-яЁёІіѢѣ]+)*`?", re.UNICODE)
 VOWELS = "аеёиоуыэюяАЕЁИОУЫЭЮЯѢѣ"
+# Backticks are allowed only directly after a vowel, including inside a word.
+LETTER = r"А-Яа-яЁёІіѢѣ"
+WORD = re.compile(rf"[{LETTER}](?:[{LETTER}]|(?<=[{VOWELS}])`)*(?:-[{LETTER}](?:[{LETTER}]|(?<=[{VOWELS}])`)*)*", re.UNICODE)
 
 @dataclass(frozen=True)
 class WordStress:
@@ -50,8 +52,34 @@ class DeterministicProvider:
         return WordStress(word, normalized, None, 0, ambiguous=True, source="rule",
                           warning="Слово не найдено; нужна ручная проверка")
 
+class SileroProvider:
+    """Production adapter for the pinned, local Silero Stress package."""
+    name="silero-stress"
+    def __init__(self, version: str):
+        from silero_stress import load_accentor
+        self.version=version;self.accentor=load_accentor();self._tokens=[];self._index=0
+    def begin_line(self, context: str):
+        predicted=self.accentor(context.replace("`",""))
+        self._tokens=[m.group() for m in re.finditer(r"[+А-Яа-яЁёІіѢѣ-]+",predicted)];self._index=0
+    def analyse_word(self, word: str, context: str) -> WordStress:
+        normalized=word.lower().replace("`","")
+        predicted=self._tokens[self._index] if self._index<len(self._tokens) else word;self._index+=1
+        if "`" in word:return WordStress(word,normalized,word.index("`")-1,1,source="existing")
+        yo=next((i for i,c in enumerate(word) if c in "ёЁ"),None)
+        if yo is not None:return WordStress(word,normalized,yo,1,source="ё")
+        plus=predicted.find("+")
+        position=plus if plus>=0 else None
+        if position is not None and position>=len(word):position=None
+        variants=self.accentor.homosolver.homodict.get(normalized) or self.accentor.homosolver.yohomodict.get(normalized) or []
+        alternatives=tuple(dict.fromkeys(v.find("+") for v in variants if v.find("+")>=0 and v.find("+")!=position))
+        ambiguous=bool(alternatives) or position is None
+        return WordStress(word,normalized,position,.65 if alternatives else (.8 if position is not None else 0),
+                          alternatives=alternatives,source="model",ambiguous=ambiguous,
+                          warning="Контекстный омограф: проверьте вариант" if alternatives else (None if position is not None else "Модель не вернула ударение"))
+
 def analyse_line(text: str, provider: StressProvider) -> dict:
     words: list[WordStress] = []
+    if hasattr(provider,"begin_line"):provider.begin_line(text)
     chunks, cursor = [], 0
     for match in WORD.finditer(text):
         chunks.append(text[cursor:match.start()])
@@ -66,8 +94,8 @@ def analyse_line(text: str, provider: StressProvider) -> dict:
     chunks.append(text[cursor:])
     uncertain = [asdict(w) for w in words if w.ambiguous or w.warning]
     confidences = [w.confidence for w in words]
-    return {"source_text": text, "suggested_text": "".join(chunks),
-            "source_hash": sha256(text.encode()).hexdigest(), "state": "pending",
+    return {"sourceText": text, "suggestedText": "".join(chunks),
+            "sourceHash": sha256(text.encode()).hexdigest(), "state": "pending",
             "confidence": min(confidences, default=1), "words": [asdict(w) for w in words],
-            "uncertain_words": uncertain, "engine": provider.name,
-            "engine_version": provider.version}
+            "uncertainWords": uncertain, "engine": provider.name,
+            "engineVersion": provider.version}

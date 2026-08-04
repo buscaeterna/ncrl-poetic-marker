@@ -27,6 +27,7 @@ export type StressSuggestion = {
   state: "pending" | "accepted" | "rejected" | "stale";
   confidence: number; uncertainWords: StressWord[]; words: StressWord[];
   engine: string; engineVersion: string; analysedAt: string;
+  acceptedWords?: number[];
 };
 
 export function effectiveLineText(line: CorpusLine) { return line.text; }
@@ -34,8 +35,23 @@ export function effectiveLineText(line: CorpusLine) { return line.text; }
 /** Accept only a result made for the current text. Existing/imported accents win. */
 export function acceptStressSuggestion(line: CorpusLine): CorpusLine {
   const suggestion = line.stressSuggestion;
-  if (!suggestion || suggestion.state === "stale" || suggestion.sourceText !== line.text) return line;
-  return { ...line, text: suggestion.suggestedText, stressSuggestion: { ...suggestion, state: "accepted" } };
+  if (!suggestion || suggestion.state === "stale") return line;
+  const proposed=[...suggestion.suggestedText.matchAll(stressToken)];let index=0;
+  const text=line.text.replace(stressToken,(token)=>{const candidate=proposed[index++]?.[0];return token.includes("`")?token:(candidate??token)});
+  return { ...line, text, stressSuggestion: { ...suggestion, state: "accepted" } };
+}
+
+const stressToken = /[А-Яа-яЁёІіѢѣ](?:[А-Яа-яЁёІіѢѣ]|(?<=[аеёиоуыэюяАЕЁИОУЫЭЮЯѢѣ])`)*(?:-[А-Яа-яЁёІіѢѣ](?:[А-Яа-яЁёІіѢѣ]|(?<=[аеёиоуыэюяАЕЁИОУЫЭЮЯѢѣ])`)*)*/gu;
+export function acceptStressWord(line: CorpusLine, wordIndex: number, position?: number): CorpusLine {
+  const suggestion=line.stressSuggestion;
+  if(!suggestion||suggestion.state==="stale")return line;
+  const matches=[...line.text.matchAll(stressToken)], word=suggestion.words[wordIndex], match=matches[wordIndex];
+  if(!word||!match||match[0].includes("`"))return line;
+  const chosen=position??word.position;
+  if(chosen===null||chosen<0||chosen>=match[0].length)return line;
+  const token=match[0].slice(0,chosen+1)+"`"+match[0].slice(chosen+1);
+  const text=line.text.slice(0,match.index)+token+line.text.slice(match.index!+match[0].length);
+  return {...line,text,stressSuggestion:{...suggestion,acceptedWords:[...new Set([...(suggestion.acceptedWords??[]),wordIndex])]}};
 }
 
 export function editLineText(line: CorpusLine, text: string): CorpusLine {
