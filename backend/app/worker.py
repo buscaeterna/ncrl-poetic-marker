@@ -74,6 +74,9 @@ def process_one() -> bool:
                             document=error_db.get(SourceDocument,failed.result.get("document_id"))
                             if document: document.status="error"; document.error=str(exc)
                 return True
+            if job.type == "pdf_page_ocr":
+                process_page_ocr(job.id)
+                return True
             if job.type != "workspace_summary": raise ValueError(f"unsupported job type: {job.type}")
             project = db.get(Project, job.project_id)
             if project is None:
@@ -86,6 +89,25 @@ def process_one() -> bool:
         if job:
             job.finished_at = job.updated_at = utcnow()
     return True
+
+def process_page_ocr(job_id) -> None:
+    with SessionLocal.begin() as db:
+        job=db.get(Job,job_id); payload=dict(job.result or {})
+        document=db.get(SourceDocument,payload.get("document_id"))
+        page=db.scalar(select(SourcePage).where(SourcePage.document_id==document.id,SourcePage.page_number==payload.get("page_number"))) if document else None
+        if not document or not page: raise ValueError("OCR page no longer exists")
+        if page.revision != payload.get("expected_revision"): raise ValueError("page revision changed before OCR started")
+        path=safe_path(document.storage_key); preview=safe_path(page.preview_key)
+    result=extract_page(path,page.page_number,preview,True)
+    with SessionLocal.begin() as db:
+        job=db.get(Job,job_id); page=db.get(SourcePage,page.id)
+        if job.status==JobStatus.cancel_requested:
+            job.status=JobStatus.cancelled;job.finished_at=utcnow();return
+        if page.revision != payload["expected_revision"]: raise ValueError("page revision changed during OCR")
+        # Manual edited_text and selected method deliberately remain untouched.
+        page.ocr_text=result["ocr"];page.confidence=result["confidence"];page.warnings=result["warnings"];page.revision+=1
+        job.status=JobStatus.succeeded;job.progress=1;job.finished_at=job.updated_at=utcnow()
+        job.result={"document_id":str(document.id),"page_number":page.page_number,"page_revision":page.revision}
 
 def process_pdf(job_id) -> None:
     with SessionLocal.begin() as db:

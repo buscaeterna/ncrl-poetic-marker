@@ -15,6 +15,7 @@ from .models import Job, JobStatus, Project, SourceDocument, SourcePage, utcnow
 from .pdf import inspect_pdf, safe_path
 from .schemas import (CapabilitiesResponse, ErrorEnvelope, HealthResponse, JobCreate,
                       JobResponse, ProjectCreate, ProjectDetail, ProjectSummary, ProjectUpdate)
+from .schemas import SourcePageUpdate
 from .settings import settings
 
 app = FastAPI(title="NCRL Poetic Marker API", version=settings.version, docs_url="/api/docs", openapi_url="/api/openapi.json")
@@ -98,8 +99,11 @@ def delete_project(project_id: UUID, db: Session = Depends(database)):
         shutil.rmtree(safe_path(str(document.id)), ignore_errors=True)
     db.delete(project); db.commit()
 
-def document_json(doc: SourceDocument, pages=False):
+def document_json(doc: SourceDocument, pages=False, db: Session | None = None):
     data = {"id": doc.id, "project_id": doc.project_id, "original_name": doc.original_name, "size": doc.size, "sha256": doc.sha256, "upload_order": doc.upload_order, "page_count": doc.page_count, "kind": doc.kind, "status": doc.status, "error": doc.error, "revision": doc.revision, "created_at": doc.created_at, "updated_at": doc.updated_at}
+    if db and doc.extraction_job_id:
+        job = db.get(Job, doc.extraction_job_id)
+        if job: data["job"] = {"id": job.id, "status": job.status.value, "progress": job.progress, "error": job.error}
     if pages: data["pages"] = [{"id": p.id, "page_number": p.page_number, "method": p.method, "raw_text": p.raw_text, "edited_text": p.edited_text, "embedded_text": p.embedded_text, "ocr_text": p.ocr_text, "confidence": p.confidence, "warnings": p.warnings, "review_status": p.review_status, "rotation": p.rotation, "revision": p.revision} for p in doc.pages]
     return data
 
@@ -129,39 +133,47 @@ async def upload_source(project_id: UUID, file: UploadFile = File(), upload_orde
 @app.get("/api/v1/projects/{project_id}/sources", tags=["PDF sources"])
 def list_sources(project_id: UUID, db: Session = Depends(database)):
     if not db.get(Project, project_id): raise missing()
-    return [document_json(d) for d in db.scalars(select(SourceDocument).where(SourceDocument.project_id == project_id).order_by(SourceDocument.upload_order, SourceDocument.created_at)).all()]
+    return [document_json(d, db=db) for d in db.scalars(select(SourceDocument).where(SourceDocument.project_id == project_id).order_by(SourceDocument.upload_order, SourceDocument.created_at)).all()]
 
 @app.get("/api/v1/sources/{document_id}", tags=["PDF sources"])
 def get_source(document_id: UUID, db: Session = Depends(database)):
     doc = db.get(SourceDocument, document_id)
     if not doc: raise missing("document")
-    return document_json(doc, True)
+    return document_json(doc, True, db)
 
 @app.post("/api/v1/sources/{document_id}/extract", status_code=202, tags=["PDF sources"])
 def start_extract(document_id: UUID, db: Session = Depends(database)):
     doc = db.get(SourceDocument, document_id)
     if not doc: raise missing("document")
     if doc.status in {"queued", "extracting"}: raise HTTPException(409, detail={"code": "document_state_conflict", "message": "Extraction already active"})
+    if doc.pages: raise HTTPException(409, detail={"code":"review_data_exists","message":"Delete the source to restart extraction without silently replacing manual edits"})
     doc.status = "queued"; doc.error = None; doc.revision += 1
     job = Job(project_id=doc.project_id, type="pdf_extract", result={"document_id": str(doc.id)})
-    db.add(job); db.commit(); db.refresh(job); return {"job_id": job.id, "document": document_json(doc)}
+    db.add(job); db.flush(); doc.extraction_job_id = job.id
+    db.commit(); db.refresh(job); return {"job_id": job.id, "document": document_json(doc, db=db)}
 
 @app.patch("/api/v1/sources/{document_id}/pages/{page_number}", tags=["PDF sources"])
-async def edit_page(document_id: UUID, page_number: int, request: Request, db: Session = Depends(database)):
-    body = await request.json(); page = db.scalar(select(SourcePage).where(SourcePage.document_id == document_id, SourcePage.page_number == page_number))
+def edit_page(document_id: UUID, page_number: int, body: SourcePageUpdate, db: Session = Depends(database)):
+    page = db.scalar(select(SourcePage).where(SourcePage.document_id == document_id, SourcePage.page_number == page_number))
     if not page: raise missing("page")
-    if body.get("revision") != page.revision: raise HTTPException(409, detail={"code": "revision_conflict", "message": "Page has a newer revision", "current_revision": page.revision})
-    if "edited_text" in body: page.edited_text = body["edited_text"]
-    if "review_status" in body: page.review_status = body["review_status"]
-    if body.get("method") in {"ocr", "embedded_text"}:
-        page.method = body["method"]; page.edited_text = page.ocr_text if page.method == "ocr" else page.embedded_text or ""
+    if body.revision != page.revision: raise HTTPException(409, detail={"code": "revision_conflict", "message": "Page has a newer revision", "current_revision": page.revision})
+    if body.edited_text is not None: page.edited_text = body.edited_text
+    if body.review_status is not None: page.review_status = body.review_status
+    if body.method is not None:
+        alternative = page.ocr_text if body.method == "ocr" else page.embedded_text
+        if alternative is None: raise HTTPException(409, detail={"code":"text_method_unavailable","message":"Requested text alternative is not available"})
+        page.method = body.method; page.edited_text = alternative
     page.revision += 1; db.commit(); return {"revision": page.revision}
 
 @app.post("/api/v1/sources/{document_id}/approve", tags=["PDF sources"])
 def approve_source(document_id: UUID, db: Session = Depends(database)):
     doc = db.get(SourceDocument, document_id)
     if not doc: raise missing("document")
-    if not doc.pages or any(p.review_status not in {"approved", "excluded"} for p in doc.pages): raise HTTPException(409, detail={"code": "review_incomplete", "message": "Every page must be approved or excluded"})
+    if doc.status != "review": raise HTTPException(409, detail={"code":"document_state_conflict","message":"Document is not ready for review approval"})
+    if len(doc.pages) != doc.page_count or any(p.review_status not in {"approved", "excluded"} for p in doc.pages): raise HTTPException(409, detail={"code": "review_incomplete", "message": "Every processed page must be approved or excluded"})
+    if doc.extraction_job_id:
+        job=db.get(Job,doc.extraction_job_id)
+        if job and job.status in {JobStatus.queued,JobStatus.running,JobStatus.cancel_requested}: raise HTTPException(409, detail={"code":"job_active","message":"Extraction job is still active"})
     doc.status = "approved"; doc.revision += 1; db.commit(); return document_json(doc, True)
 
 @app.get("/api/v1/sources/{document_id}/preview/{page_number}", tags=["PDF sources"])
@@ -188,17 +200,16 @@ def download_json(document_id: UUID, db: Session = Depends(database)):
     if not doc: raise missing("document")
     return document_json(doc, True)
 
-@app.post("/api/v1/sources/{document_id}/pages/{page_number}/ocr", tags=["PDF sources"])
+@app.post("/api/v1/sources/{document_id}/pages/{page_number}/ocr", status_code=202, tags=["PDF sources"])
 def repeat_page_ocr(document_id: UUID, page_number: int, revision: int, db: Session = Depends(database)):
-    from .pdf import extract_page
     doc = db.get(SourceDocument, document_id)
     page = db.scalar(select(SourcePage).where(SourcePage.document_id == document_id, SourcePage.page_number == page_number))
     if not doc or not page: raise missing("page")
     if page.revision != revision: raise HTTPException(409, detail={"code":"revision_conflict","message":"Page has a newer revision","current_revision":page.revision})
-    result = extract_page(safe_path(doc.storage_key), page_number, safe_path(page.preview_key), True)
-    # Preserve manual edits: the new OCR is an alternative until explicitly selected.
-    page.ocr_text=result["ocr"]; page.confidence=result["confidence"]; page.warnings=result["warnings"]; page.revision += 1
-    db.commit(); return {"revision":page.revision,"ocr_text":page.ocr_text,"confidence":page.confidence,"warnings":page.warnings}
+    active=db.scalar(select(Job).where(Job.type=="pdf_page_ocr",Job.status.in_([JobStatus.queued,JobStatus.running,JobStatus.cancel_requested]),Job.result["document_id"].as_string()==str(document_id),Job.result["page_number"].as_integer()==page_number))
+    if active: raise HTTPException(409, detail={"code":"ocr_job_active","message":"OCR retry is already active for this page"})
+    job=Job(project_id=doc.project_id,type="pdf_page_ocr",result={"document_id":str(document_id),"page_number":page_number,"expected_revision":revision})
+    db.add(job);db.commit();db.refresh(job);return {"job_id":job.id,"status":job.status.value}
 
 @app.delete("/api/v1/sources/{document_id}", status_code=204, tags=["PDF sources"])
 def delete_source(document_id: UUID, db: Session = Depends(database)):

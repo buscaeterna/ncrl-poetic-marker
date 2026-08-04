@@ -61,6 +61,7 @@ class SourceDocument(Base):
     __tablename__ = "source_documents"
     id: Mapped[uuid.UUID] = mapped_column(UUID_TYPE, primary_key=True, default=uuid.uuid4)
     project_id: Mapped[uuid.UUID] = mapped_column(UUID_TYPE, ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    extraction_job_id: Mapped[uuid.UUID | None] = mapped_column(UUID_TYPE, ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True)
     original_name: Mapped[str] = mapped_column(String(500))
     storage_key: Mapped[str] = mapped_column(String(100), unique=True)
     mime_type: Mapped[str] = mapped_column(String(100), default="application/pdf")

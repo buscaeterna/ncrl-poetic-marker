@@ -30,3 +30,30 @@ def test_tesseract_tsv_preserves_verse_lines_and_stanzas():
     text, confidence=tsv_text("\n".join([head,*rows]))
     assert text == "Первая строка\nВторая\n\nНовая строфа"
     assert confidence == 85
+
+def test_page_validation_approval_guards_and_background_ocr(tmp_path, monkeypatch):
+    from app.database import SessionLocal
+    from app.models import Project, SourceDocument, SourcePage
+    import uuid
+    monkeypatch.setattr("app.settings.settings.files_dir",str(tmp_path))
+    with SessionLocal.begin() as db:
+        project=Project(name="pdf",schema_version=1,workspace=workspace());db.add(project);db.flush()
+        document=SourceDocument(project_id=project.id,original_name="scan.pdf",storage_key=f"{uuid.uuid4()}/scan.pdf",mime_type="application/pdf",size=1,sha256="0"*64,upload_order=0,page_count=2,status="review")
+        db.add(document);db.flush();page=SourcePage(document_id=document.id,page_number=1,method="ocr",raw_text="raw",edited_text="manual",ocr_text="old",warnings=[]);db.add(page);db.flush();did,pid,revision=document.id,page.id,page.revision
+    assert client.patch(f"/api/v1/sources/{did}/pages/1",json={"revision":revision,"review_status":"invalid"}).status_code==422
+    assert client.post(f"/api/v1/sources/{did}/approve").status_code==409
+    response=client.post(f"/api/v1/sources/{did}/pages/1/ocr?revision={revision}")
+    assert response.status_code==202
+    with SessionLocal() as db:
+        stored=db.get(SourcePage,pid);assert stored.edited_text=="manual" and stored.ocr_text=="old"
+
+def test_document_list_exposes_its_exact_job_and_progress():
+    from app.database import SessionLocal
+    from app.models import Job, SourceDocument
+    project=client.post("/api/v1/projects",json={"name":"jobs","workspace":workspace()}).json()
+    import uuid
+    with SessionLocal.begin() as db:
+        job=Job(project_id=uuid.UUID(project["id"]),type="pdf_extract",progress=.5);db.add(job);db.flush()
+        doc=SourceDocument(project_id=uuid.UUID(project["id"]),extraction_job_id=job.id,original_name="a.pdf",storage_key=f"{uuid.uuid4()}/a.pdf",mime_type="application/pdf",size=1,sha256="0"*64,upload_order=0,page_count=2,status="extracting");db.add(doc);db.flush();job_id=str(job.id)
+    source=client.get(f"/api/v1/projects/{project['id']}/sources").json()[0]
+    assert str(source["job"]["id"])==job_id and source["job"]["progress"]==.5

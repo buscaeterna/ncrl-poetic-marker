@@ -75,6 +75,12 @@ class JobResponse(BaseModel):
     finished_at: datetime | None
     updated_at: datetime
 
+class SourcePageUpdate(BaseModel):
+    edited_text: str | None = None
+    review_status: Literal["pending", "approved", "excluded"] | None = None
+    method: Literal["embedded_text", "ocr"] | None = None
+    revision: int = Field(ge=1)
+
 
 class ErrorResponse(BaseModel):
     code: str
