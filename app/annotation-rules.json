@@ -1,0 +1,374 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "R001",
+      "title": "Построчный Вл запрещён",
+      "description": "Вл нельзя использовать в построчном теге.",
+      "status": "active",
+      "source": "user-confirmed amendment",
+      "scope": [
+        "line"
+      ],
+      "severity": "error",
+      "condition": "Строка размечена как Вл",
+      "requirement": "Каждая строка получает конкретный метр: силлабо-тонический, Дк, Тк или Ак.",
+      "validExamples": [
+        "<#Я4м>"
+      ],
+      "invalidExamples": [
+        "<#Вл0м>"
+      ],
+      "automation": "implemented",
+      "validatorKey": "validateR001",
+      "notes": "Проверка сообщает о проблеме и не изменяет данные."
+    },
+    {
+      "id": "R002",
+      "title": "Вл не означает упрощённую разметку",
+      "description": "Свободный стих не связан автоматически с упрощённой разметкой.",
+      "status": "active",
+      "source": "user-confirmed amendment",
+      "scope": [
+        "metadata"
+      ],
+      "severity": "error",
+      "condition": "@метр содержит Вл и @доп содержит упрощённую разметку",
+      "requirement": "Не добавлять упрощённую разметку только из-за Вл.",
+      "validExamples": [
+        "@метр тонический | Вл; @доп"
+      ],
+      "invalidExamples": [
+        "@метр тонический | Вл; @доп упрощённая разметка"
+      ],
+      "automation": "implemented",
+      "validatorKey": "validateR002",
+      "notes": "Проверка сообщает о проблеме и не изменяет данные."
+    },
+    {
+      "id": "R003",
+      "title": "Стопность обязательна",
+      "description": "Стопность должна быть определена, а не заменена нулём.",
+      "status": "active",
+      "source": "user-confirmed amendment",
+      "scope": [
+        "line",
+        "metadata"
+      ],
+      "severity": "error",
+      "condition": "@стопность пуста или равна 0 либо стопность строки равна 0",
+      "requirement": "Указать фактическую стопность; при неизвестном значении запросить проверку.",
+      "validExamples": [
+        "@стопность 4"
+      ],
+      "invalidExamples": [
+        "@стопность 0"
+      ],
+      "automation": "implemented",
+      "validatorKey": "validateR003",
+      "notes": "Проверка сообщает о проблеме и не изменяет данные."
+    },
+    {
+      "id": "R004",
+      "title": "Тк отражается в поле метра",
+      "description": "Любое присутствие Тк должно быть видно в @метр.",
+      "status": "active",
+      "source": "user-confirmed amendment",
+      "scope": [
+        "line",
+        "metadata"
+      ],
+      "severity": "error",
+      "condition": "Тк есть в строке или формуле, но отсутствует в @метр",
+      "requirement": "Добавить Тк в @метр.",
+      "validExamples": [
+        "@метр тонический | Дк, Тк"
+      ],
+      "invalidExamples": [
+        "@метр тонический | Дк; @формула Дк4м; Тк3м"
+      ],
+      "automation": "implemented",
+      "validatorKey": "validateR004",
+      "notes": "Проверка сообщает о проблеме и не изменяет данные."
+    },
+    {
+      "id": "R005",
+      "title": "Синхронизация цезурных эффектов",
+      "description": "Цезурные наращения и усечения синхронизируются между @формула и @доп.",
+      "status": "active",
+      "source": "user-confirmed amendment",
+      "scope": [
+        "metadata"
+      ],
+      "severity": "error",
+      "condition": "Обозначение ~ и цезурная помета присутствуют только в одном поле",
+      "requirement": "Отразить эффект одновременно в @формула и @доп.",
+      "validExamples": [
+        "@формула Я4~м; @доп цезурные усечения"
+      ],
+      "invalidExamples": [
+        "@формула Я4~м; @доп"
+      ],
+      "automation": "implemented",
+      "validatorKey": "validateR005",
+      "notes": "Проверка сообщает о проблеме и не изменяет данные."
+    },
+    {
+      "id": "R006",
+      "title": "Нарушения строфики неприменимы к Вл",
+      "description": "У Вл нет исходной регулярной строфической нормы.",
+      "status": "active",
+      "source": "user-confirmed amendment",
+      "scope": [
+        "metadata"
+      ],
+      "severity": "error",
+      "condition": "@метр содержит Вл и @доп содержит нарушения строфики",
+      "requirement": "Удалить неприменимую помету.",
+      "validExamples": [
+        "@метр тонический | Вл; @доп"
+      ],
+      "invalidExamples": [
+        "@метр тонический | Вл; @доп нарушения строфики"
+      ],
+      "automation": "implemented",
+      "validatorKey": "validateR006",
+      "notes": "Проверка сообщает о проблеме и не изменяет данные."
+    },
+    {
+      "id": "R007",
+      "title": "Формат гетерометрии",
+      "description": "Гетерометрия требует слова, разделителя | и списка метров без отдельной переменной анакрусы.",
+      "status": "active",
+      "source": "user-confirmed amendment",
+      "scope": [
+        "metadata"
+      ],
+      "severity": "error",
+      "condition": "Заявлена гетерометрия с неверным форматом или лишней пометой",
+      "requirement": "Использовать формат «гетерометрия | …».",
+      "validExamples": [
+        "@метр гетерометрия | Ан, Я"
+      ],
+      "invalidExamples": [
+        "@метр гетерометрия Ан Я"
+      ],
+      "automation": "implemented",
+      "validatorKey": "validateR007",
+      "notes": "Проверка сообщает о проблеме и не изменяет данные."
+    },
+    {
+      "id": "R008",
+      "title": "Редкие формулы после точки с запятой",
+      "description": "Несколько редких вариантов разделяются запятыми.",
+      "status": "active",
+      "source": "user-confirmed amendment",
+      "scope": [
+        "metadata"
+      ],
+      "severity": "error",
+      "condition": "После ; несколько формул перечислены без запятых",
+      "requirement": "Разделить редкие формулы запятыми.",
+      "validExamples": [
+        "Я4м; Я3м, Х4ж"
+      ],
+      "invalidExamples": [
+        "Я4м; Я3м Х4ж"
+      ],
+      "automation": "implemented",
+      "validatorKey": "validateR008",
+      "notes": "Проверка сообщает о проблеме и не изменяет данные."
+    },
+    {
+      "id": "R009",
+      "title": "Нулевая и графическая строфика",
+      "description": "@строфика 0 не должна автоматически дублироваться в @гр_строфика.",
+      "status": "active",
+      "source": "user-confirmed amendment",
+      "scope": [
+        "metadata"
+      ],
+      "severity": "error",
+      "condition": "Оба поля равны 0",
+      "requirement": "Определить @гр_строфика по реальному графическому членению.",
+      "validExamples": [
+        "@строфика 0; @гр_строфика"
+      ],
+      "invalidExamples": [
+        "@строфика 0; @гр_строфика 0"
+      ],
+      "automation": "implemented",
+      "validatorKey": "validateR009",
+      "notes": "Проверка сообщает о проблеме и не изменяет данные."
+    },
+    {
+      "id": "R010",
+      "title": "Ненулевая строфика без графического членения",
+      "description": "Без пробельных отбивок при ненулевой строфике требуется @гр_строфика 0.",
+      "status": "active",
+      "source": "user-confirmed amendment",
+      "scope": [
+        "metadata"
+      ],
+      "severity": "error",
+      "condition": "@строфика ненулевая, отбивок нет, @гр_строфика не 0",
+      "requirement": "Явно указать @гр_строфика 0.",
+      "validExamples": [
+        "@строфика 4; @гр_строфика 0"
+      ],
+      "invalidExamples": [
+        "@строфика 4; @гр_строфика"
+      ],
+      "automation": "implemented",
+      "validatorKey": "validateR010",
+      "notes": "Проверка сообщает о проблеме и не изменяет данные."
+    },
+    {
+      "id": "R011",
+      "title": "Предпочтение регулярной интерпретации",
+      "description": "Предпочитать силлабо-тонику, затем Дк, Тк, Ак и только затем Вл.",
+      "status": "active",
+      "source": "user-confirmed amendment",
+      "scope": [
+        "analysis"
+      ],
+      "severity": "expert_review",
+      "condition": "Есть несколько метрических интерпретаций",
+      "requirement": "Выбрать наиболее регулярную корректную интерпретацию.",
+      "validExamples": [
+        "Я4 при устойчивой схеме"
+      ],
+      "invalidExamples": [
+        "Вл при устойчивой схеме"
+      ],
+      "automation": "planned",
+      "notes": "Требует будущего метрического анализатора и экспертной проверки."
+    },
+    {
+      "id": "R012",
+      "title": "Ак внутри дольникового произведения",
+      "description": "Строку Ак в дольнике следует повторно проверить как Дк.",
+      "status": "active",
+      "source": "user-confirmed amendment",
+      "scope": [
+        "analysis"
+      ],
+      "severity": "expert_review",
+      "condition": "Ак встречается в дольниковом произведении",
+      "requirement": "Проверить возможность дольниковой интерпретации.",
+      "validExamples": [
+        "Дк после экспертной проверки"
+      ],
+      "invalidExamples": [
+        "Ак без повторной проверки"
+      ],
+      "automation": "planned",
+      "notes": "Требует будущего метрического анализатора и экспертной проверки."
+    },
+    {
+      "id": "R013",
+      "title": "Длинные интервалы и анакруса",
+      "description": "Дополнительный обоснованный икт может уточнить Ак до Тк или Дк.",
+      "status": "active",
+      "source": "user-confirmed amendment",
+      "scope": [
+        "analysis"
+      ],
+      "severity": "expert_review",
+      "condition": "Ак основан на длинном интервале или анакрусе",
+      "requirement": "Проверить обоснованный икт без механической вставки.",
+      "validExamples": [
+        "Тк после анализа"
+      ],
+      "invalidExamples": [
+        "Механически добавленный икт"
+      ],
+      "automation": "planned",
+      "notes": "Требует будущего метрического анализатора и экспертной проверки."
+    },
+    {
+      "id": "R014",
+      "title": "Вл и стопность",
+      "description": "Компактный последовательный набор стопностей сам по себе не доказывает Вл.",
+      "status": "active",
+      "source": "user-confirmed amendment",
+      "scope": [
+        "analysis"
+      ],
+      "severity": "expert_review",
+      "condition": "Вл выбран по набору соседних стопностей",
+      "requirement": "Проверить Тк, Ак и более регулярные варианты без процентных порогов.",
+      "validExamples": [
+        "Тк 3, 4, 5"
+      ],
+      "invalidExamples": [
+        "Вл только из-за 3, 4, 5"
+      ],
+      "automation": "planned",
+      "notes": "Требует будущего метрического анализатора и экспертной проверки."
+    },
+    {
+      "id": "R015",
+      "title": "Распознаваемый каркас не является Вл",
+      "description": "Устойчивый метрический или полиметрический каркас нельзя скрывать как Вл.",
+      "status": "active",
+      "source": "user-confirmed amendment",
+      "scope": [
+        "analysis"
+      ],
+      "severity": "expert_review",
+      "condition": "Обнаружен устойчивый каркас с отдельными отклонениями",
+      "requirement": "Описать каркас точнее; рифму использовать лишь как повод для проверки.",
+      "validExamples": [
+        "Я с редким отклонением"
+      ],
+      "invalidExamples": [
+        "Вл из-за одной строки"
+      ],
+      "automation": "planned",
+      "notes": "Требует будущего метрического анализатора и экспертной проверки."
+    },
+    {
+      "id": "R016",
+      "title": "Полиметрия",
+      "description": "Самостоятельные метрические части оформляются как полиметрия.",
+      "status": "active",
+      "source": "user-confirmed amendment",
+      "scope": [
+        "analysis"
+      ],
+      "severity": "expert_review",
+      "condition": "Есть метрически самостоятельные части",
+      "requirement": "Зафиксировать полиметрию и границы частей; не выводить её из любого сочетания метров.",
+      "validExamples": [
+        "полиметрия | Я # Дк"
+      ],
+      "invalidExamples": [
+        "Вл при двух самостоятельных частях"
+      ],
+      "automation": "planned",
+      "notes": "Требует будущего метрического анализатора и экспертной проверки."
+    },
+    {
+      "id": "R017",
+      "title": "Парцеллированные строки",
+      "description": "Графические фрагменты могут составлять одну метрическую строку.",
+      "status": "active",
+      "source": "user-confirmed amendment",
+      "scope": [
+        "analysis"
+      ],
+      "severity": "expert_review",
+      "condition": "Строка парцеллирована графически",
+      "requirement": "Восстановить метрическую строку и отдельно отметить графику.",
+      "validExamples": [
+        "Одна строка из двух фрагментов"
+      ],
+      "invalidExamples": [
+        "Два стиха по числу фрагментов"
+      ],
+      "automation": "planned",
+      "notes": "Требует будущего метрического анализатора и экспертной проверки."
+    }
+  ]
+}

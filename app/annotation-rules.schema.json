@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ncrl-poetic-marker.local/annotation-rules.schema.json",
+  "type": "object", "additionalProperties": false, "required": ["version", "rules"],
+  "properties": {
+    "version": { "const": 1 },
+    "rules": { "type": "array", "items": { "$ref": "#/$defs/rule" } }
+  },
+  "$defs": { "rule": {
+    "type": "object", "additionalProperties": false,
+    "required": ["id", "title", "description", "status", "source", "scope", "severity", "condition", "requirement", "validExamples", "invalidExamples", "automation", "notes"],
+    "properties": {
+      "id": { "type": "string", "pattern": "^R[0-9]{3}$" }, "title": { "type": "string", "minLength": 1 }, "description": { "type": "string", "minLength": 1 },
+      "status": { "enum": ["active", "superseded", "needs_review"] }, "source": { "const": "user-confirmed amendment" },
+      "scope": { "type": "array", "items": { "type": "string" }, "minItems": 1 }, "severity": { "enum": ["error", "warning", "expert_review"] },
+      "condition": { "type": "string" }, "requirement": { "type": "string", "minLength": 1 },
+      "validExamples": { "type": "array", "items": { "type": "string" } }, "invalidExamples": { "type": "array", "items": { "type": "string" } },
+      "automation": { "enum": ["implemented", "planned", "manual"] }, "validatorKey": { "type": "string", "minLength": 1 }, "notes": { "type": "string" }
+    }
+  }}
+}
