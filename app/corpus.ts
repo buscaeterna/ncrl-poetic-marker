@@ -40,6 +40,8 @@ export type ImportedPoem = {
   editorMetadata?: import("./editor-metadata").EditorMetadata;
   /** Raw text has no authoritative imported annotation, even though its generated HTML has empty fields. */
   rawText?: boolean;
+  /** Import provenance is editor state and is deliberately omitted from HTML export. */
+  provenance?: {sourceDocumentId:string;sourcePdfName:string;pageRange:string;usedOcr:boolean;confirmedAt:string};
 };
 
 export type ImportedCorpus = {

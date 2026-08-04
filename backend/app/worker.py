@@ -38,6 +38,12 @@ def recover_stale() -> None:
                 job.status, job.error, job.finished_at = JobStatus.failed, "worker lease expired", utcnow()
             else:
                 job.status, job.started_at = JobStatus.queued, None
+        cancelled = db.scalars(select(Job).where(Job.status == JobStatus.cancel_requested, Job.updated_at < cutoff)).all()
+        for job in cancelled:
+            job.status, job.finished_at, job.error = JobStatus.cancelled, utcnow(), "worker stopped after cancellation request"
+            if job.type == "pdf_extract" and job.result:
+                document = db.get(SourceDocument, job.result.get("document_id"))
+                if document: document.status = "cancelled"
 
 
 def claim_job():
@@ -60,7 +66,13 @@ def process_one() -> bool:
             if job is None:
                 return True
             if job.type == "pdf_extract":
-                process_pdf(job.id)
+                try: process_pdf(job.id)
+                except Exception as exc:
+                    with SessionLocal.begin() as error_db:
+                        failed=error_db.get(Job,job.id); failed.status=JobStatus.failed; failed.error=str(exc); failed.finished_at=utcnow()
+                        if failed.result:
+                            document=error_db.get(SourceDocument,failed.result.get("document_id"))
+                            if document: document.status="error"; document.error=str(exc)
                 return True
             if job.type != "workspace_summary": raise ValueError(f"unsupported job type: {job.type}")
             project = db.get(Project, job.project_id)

@@ -1,18 +1,18 @@
-"""Local-only PDF extraction primitives. No function in this module uses a network API."""
+"""Permissively licensed, local-only PDF extraction and OCR primitives."""
 import re
 import subprocess
 import tempfile
+from collections import defaultdict
 from pathlib import Path
 
-import fitz
+import pypdfium2 as pdfium
+from pypdf import PdfReader
 
 from .settings import settings
 
 def safe_path(key: str) -> Path:
-    root = Path(settings.files_dir).resolve()
-    path = (root / key).resolve()
-    if root not in path.parents:
-        raise ValueError("unsafe storage key")
+    root = Path(settings.files_dir).resolve(); path = (root / key).resolve()
+    if root not in path.parents: raise ValueError("unsafe storage key")
     return path
 
 def text_quality(text: str) -> tuple[bool, list[str]]:
@@ -23,43 +23,45 @@ def text_quality(text: str) -> tuple[bool, list[str]]:
     if bad > max(2, len(text) // 100): warnings.append("Текстовый слой содержит повреждённые символы")
     return not warnings, warnings
 
-def inspect_pdf(path: Path) -> tuple[int, bool]:
+def inspect_pdf(path: Path) -> int:
     try:
-        doc = fitz.open(path)
-        if doc.needs_pass: raise PermissionError("PDF защищён паролем; зашифрованные PDF пока не поддерживаются")
-        count = len(doc)
-        doc.close()
-        return count, False
+        reader = PdfReader(path)
+        if reader.is_encrypted: raise PermissionError("PDF защищён паролем; зашифрованные PDF пока не поддерживаются")
+        return len(reader.pages)
     except PermissionError: raise
     except Exception as exc: raise ValueError("Повреждённый или неподдерживаемый PDF") from exc
 
-def extract_page(path: Path, number: int, preview: Path, force_ocr: bool = False) -> dict:
-    with fitz.open(path) as doc:
-        page = doc[number - 1]
-        embedded = page.get_text("text")
-        usable, warnings = text_quality(embedded)
-        scale = settings.pdf_render_dpi / 72
-        pixels = int(page.rect.width * scale) * int(page.rect.height * scale)
-        if pixels > settings.pdf_max_pixels:
-            scale *= (settings.pdf_max_pixels / pixels) ** .5
-            warnings.append("Разрешение preview ограничено")
-        pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
-        preview.parent.mkdir(parents=True, exist_ok=True)
-        pix.save(preview)
-        ocr = None
-        confidence = None
-        if force_ocr or not usable:
-            with tempfile.TemporaryDirectory() as tmp:
-                image = Path(tmp) / "page.png"; pix.save(image)
-                proc = subprocess.run(
-                    ["tesseract", str(image), "stdout", "-l", "rus+eng", "--psm", "6", "tsv"],
-                    capture_output=True, text=True, timeout=settings.ocr_page_timeout_seconds, check=True,
-                )
-                rows = [line.split("\t") for line in proc.stdout.splitlines()[1:]]
-                words = [r for r in rows if len(r) >= 12 and r[11].strip()]
-                ocr = " ".join(r[11] for r in words)
-                scores = [float(r[10]) for r in words if float(r[10]) >= 0]
-                confidence = sum(scores) / len(scores) if scores else None
-                warnings.append("OCR требует обязательной ручной проверки")
-        chosen = ocr if (force_ocr or not usable) else embedded
-        return {"embedded": embedded, "ocr": ocr, "text": chosen or "", "method": "ocr" if (force_ocr or not usable) else "embedded_text", "confidence": confidence, "warnings": warnings, "rotation": page.rotation}
+def tsv_text(tsv: str) -> tuple[str, float | None]:
+    """Restore Tesseract block/paragraph/line structure without joining hyphens."""
+    lines: dict[tuple[int,int,int], list[str]] = defaultdict(list); scores=[]
+    for raw in tsv.splitlines()[1:]:
+        row=raw.split("\t")
+        if len(row)<12 or not row[11].strip(): continue
+        key=(int(row[2]),int(row[3]),int(row[4])); lines[key].append(row[11])
+        try:
+            score=float(row[10])
+            if score>=0: scores.append(score)
+        except ValueError: pass
+    output=[]; previous=None
+    for key, words in sorted(lines.items()):
+        paragraph=key[:2]
+        if previous is not None and paragraph != previous: output.append("")
+        output.append(" ".join(words)); previous=paragraph
+    return "\n".join(output), sum(scores)/len(scores) if scores else None
+
+def extract_page(path: Path, number: int, preview: Path, force_ocr=False) -> dict:
+    reader=PdfReader(path); embedded=reader.pages[number-1].extract_text() or ""; usable,warnings=text_quality(embedded)
+    pdf=pdfium.PdfDocument(path); page=pdf[number-1]
+    width,height=page.get_size(); scale=settings.pdf_render_dpi/72
+    if width*height*scale*scale>settings.pdf_max_pixels:
+        scale=(settings.pdf_max_pixels/(width*height))**.5; warnings.append("Разрешение preview ограничено")
+    bitmap=page.render(scale=scale, rotation=page.get_rotation()); image=bitmap.to_pil()
+    preview.parent.mkdir(parents=True,exist_ok=True); image.save(preview)
+    ocr=confidence=None
+    if force_ocr or not usable:
+        with tempfile.TemporaryDirectory() as tmp:
+            source=Path(tmp)/"page.png"; image.save(source)
+            proc=subprocess.run(["tesseract",str(source),"stdout","-l","rus+eng","--psm","6","tsv"],capture_output=True,text=True,timeout=settings.ocr_page_timeout_seconds,check=True)
+            ocr,confidence=tsv_text(proc.stdout); warnings.append("OCR требует обязательной ручной проверки")
+    chosen=ocr if force_ocr or not usable else embedded
+    return {"embedded":embedded,"ocr":ocr,"text":chosen or "","method":"ocr" if force_ocr or not usable else "embedded_text","confidence":confidence,"warnings":warnings,"rotation":page.get_rotation()*90}

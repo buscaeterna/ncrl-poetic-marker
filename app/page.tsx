@@ -8,7 +8,7 @@ import { PdfImportDialog } from "./pdf-import-dialog";
 import { createRawTextImport, finalizeRawTextImport, type RawTextImportDraft } from "./raw-text";
 import { ruleById, validateAnnotation } from "./annotation-rules";
 import { RuntimeIndicator } from "./runtime-indicator";
-import { ProjectsDialog } from "./projects-dialog";
+import { ProjectsDialog, type ServerProject } from "./projects-dialog";
 import { effectiveMetadata, metadataFromFields, restoreOriginalValue, setManualValue, type AutomaticMetadata, type DocumentMode, type EditorMetadata, type MetadataKey } from "./editor-metadata";
 
 type Clause = "м" | "ж" | "д" | "г";
@@ -298,6 +298,7 @@ export default function Home() {
   const [pendingRawImport, setPendingRawImport] = useState<RawTextImportDraft[] | null>(null);
   const [workspaceReady, setWorkspaceReady] = useState(false);
   const [projectsOpen, setProjectsOpen] = useState(false);
+  const [serverProject, setServerProject] = useState<ServerProject | null>(null);
   const [pdfOpen, setPdfOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const meta = useMemo(() => deriveMetadata(doc), [doc]);
@@ -466,7 +467,7 @@ export default function Home() {
 
   return (
     <main className="app-shell">
-      {projectsOpen && <ProjectsDialog workspace={{corpora, poems, activeId, queue}} onClose={() => setProjectsOpen(false)} onLoad={(workspace) => { setCorpora(workspace.corpora); setPoems(workspace.poems); setActiveId(workspace.activeId); setQueue(workspace.queue); const active=workspace.poems.find(p=>p.id===workspace.activeId); if(active)setDoc(poemToDocument(active)); saveWorkspace(workspace); }} />}
+      {projectsOpen && <ProjectsDialog workspace={{corpora, poems, activeId, queue}} onProject={setServerProject} onClose={() => setProjectsOpen(false)} onLoad={(workspace) => { setCorpora(workspace.corpora); setPoems(workspace.poems); setActiveId(workspace.activeId); setQueue(workspace.queue); const active=workspace.poems.find(p=>p.id===workspace.activeId); if(active)setDoc(poemToDocument(active)); saveWorkspace(workspace); }} />}
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark">СТ</span>
@@ -606,7 +607,7 @@ export default function Home() {
         </aside>
       </section>
       {pendingRawImport && <RawImportDialog drafts={pendingRawImport} onCancel={() => setPendingRawImport(null)} onConfirm={confirmRawImport} />}
-      {pdfOpen && <PdfImportDialog onClose={() => setPdfOpen(false)} onReviewed={(name,text) => { const bytes=new TextEncoder().encode(text); if(splitCorpus(text).length){const item=importCorpusBytes(bytes,name,corpora.length);setCorpora(v=>[...v,item.corpus]);setPoems(v=>[...v,...item.documents]);setQueue(v=>[...v,...item.documents.map(p=>p.id)]);}else setPendingRawImport([createRawTextImport(bytes,name,corpora.length)]);setPdfOpen(false); }} />}
+      {pdfOpen && <PdfImportDialog project={serverProject} onClose={() => setPdfOpen(false)} onReviewed={async (source,text) => { const bytes=new TextEncoder().encode(text); const provenance={sourceDocumentId:source.id,sourcePdfName:source.original_name,pageRange:`1-${source.page_count}`,usedOcr:Boolean(source.pages?.some(p=>p.method==="ocr")),confirmedAt:new Date().toISOString()}; if(splitCorpus(text).length){const item=importCorpusBytes(bytes,source.original_name,corpora.length);const documents=item.documents.map(p=>({...p,provenance,status:"review" as const}));const workspace={corpora:[...corpora,item.corpus],poems:[...poems,...documents],activeId:documents[0]?.id??activeId,queue:[...queue,...documents.map(p=>p.id)]};const response=await fetch(`/api/v1/projects/${serverProject!.id}`,{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({name:serverProject!.name,schema_version:serverProject!.schema_version,revision:serverProject!.revision,workspace})});if(response.status===409)throw new Error("Конфликт revision проекта: откройте свежую серверную версию и повторите импорт");if(!response.ok)throw new Error("Не удалось сохранить импорт в серверном проекте");setServerProject(await response.json());setCorpora(workspace.corpora);setPoems(workspace.poems);setQueue(workspace.queue);}else setPendingRawImport([createRawTextImport(bytes,source.original_name,corpora.length)]);setPdfOpen(false); }} />}
     </main>
   );
 }

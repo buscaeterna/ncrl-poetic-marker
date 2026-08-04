@@ -24,7 +24,7 @@ Node.js 22: `npm ci`, `npm test`, `npm run lint`, `npm run build`, `npm run buil
 
 ## PDF и локальный OCR
 
-Полный локальный режим поддерживает пакетную загрузку PDF и обязательную постраничную проверку перед импортом. Цифровой текст извлекается PyMuPDF; для страниц без пригодного слоя выполняется CPU-OCR Tesseract (`rus+eng`). PDF и preview остаются в named volume `ncrl_files`, а метаданные и исправления — в PostgreSQL. Данные не отправляются в облако; GitHub Pages не показывает эту функцию.
+Полный локальный режим поддерживает пакетную загрузку PDF и обязательную постраничную проверку перед импортом. Цифровой текст извлекается pypdf, а страницы рендерятся pypdfium2; для страниц без пригодного слоя выполняется CPU-OCR Tesseract (`rus+eng`). PDF и preview остаются в named volume `ncrl_files`, а метаданные и исправления — в PostgreSQL. Данные не отправляются в облако; GitHub Pages не показывает эту функцию.
 
 Docker Desktop 4+ или совместимый Docker Engine поддерживаются на Windows, macOS и Linux (`linux/amd64`, `linux/arm64`); GPU не требуется. Образ стал больше из-за OCR. Лимиты: `NCRL_MAX_PDF_BYTES` (200 MiB), `NCRL_MAX_PDF_PAGES` (1000), `NCRL_PDF_RENDER_DPI`, `NCRL_PDF_MAX_PIXELS`, `NCRL_OCR_PAGE_TIMEOUT_SECONDS`.
 

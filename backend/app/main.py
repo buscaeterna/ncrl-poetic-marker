@@ -117,7 +117,7 @@ async def upload_source(project_id: UUID, file: UploadFile = File(), upload_orde
                 if size > settings.max_pdf_bytes: raise HTTPException(413, detail={"code": "pdf_too_large", "message": "PDF exceeds configured size limit"})
                 digest.update(chunk); output.write(chunk)
         if signature != b"%PDF-": raise HTTPException(415, detail={"code": "not_pdf", "message": "File does not have a PDF signature"})
-        try: pages, _ = inspect_pdf(destination)
+        try: pages = inspect_pdf(destination)
         except PermissionError as exc: raise HTTPException(422, detail={"code": "encrypted_pdf", "message": str(exc)})
         except ValueError as exc: raise HTTPException(422, detail={"code": "invalid_pdf", "message": str(exc)})
         if pages > settings.max_pdf_pages: raise HTTPException(422, detail={"code": "too_many_pages", "message": "PDF exceeds configured page limit"})
@@ -182,16 +182,36 @@ def download_text(document_id: UUID, db: Session = Depends(database)):
     if not doc: raise missing("document")
     return PlainTextResponse("\n\n\f\n\n".join(p.edited_text for p in doc.pages if p.review_status != "excluded"))
 
+@app.get("/api/v1/sources/{document_id}/json", tags=["PDF sources"])
+def download_json(document_id: UUID, db: Session = Depends(database)):
+    doc = db.get(SourceDocument, document_id)
+    if not doc: raise missing("document")
+    return document_json(doc, True)
+
+@app.post("/api/v1/sources/{document_id}/pages/{page_number}/ocr", tags=["PDF sources"])
+def repeat_page_ocr(document_id: UUID, page_number: int, revision: int, db: Session = Depends(database)):
+    from .pdf import extract_page
+    doc = db.get(SourceDocument, document_id)
+    page = db.scalar(select(SourcePage).where(SourcePage.document_id == document_id, SourcePage.page_number == page_number))
+    if not doc or not page: raise missing("page")
+    if page.revision != revision: raise HTTPException(409, detail={"code":"revision_conflict","message":"Page has a newer revision","current_revision":page.revision})
+    result = extract_page(safe_path(doc.storage_key), page_number, safe_path(page.preview_key), True)
+    # Preserve manual edits: the new OCR is an alternative until explicitly selected.
+    page.ocr_text=result["ocr"]; page.confidence=result["confidence"]; page.warnings=result["warnings"]; page.revision += 1
+    db.commit(); return {"revision":page.revision,"ocr_text":page.ocr_text,"confidence":page.confidence,"warnings":page.warnings}
+
 @app.delete("/api/v1/sources/{document_id}", status_code=204, tags=["PDF sources"])
 def delete_source(document_id: UUID, db: Session = Depends(database)):
     doc = db.get(SourceDocument, document_id)
     if not doc: raise missing("document")
+    if doc.status in {"queued", "extracting"}: raise HTTPException(409, detail={"code":"document_active","message":"Cancel active extraction before deleting the source"})
     shutil.rmtree(safe_path(str(doc.id)), ignore_errors=True); db.delete(doc); db.commit()
 
 
 @app.post("/api/v1/projects/{project_id}/jobs", response_model=JobResponse, status_code=201, responses={404: {"model": ErrorEnvelope}}, tags=["jobs"])
 def create_job(project_id: UUID, body: JobCreate, db: Session = Depends(database)):
     if not db.get(Project, project_id): raise missing()
+    if body.type == "pdf_extract": raise HTTPException(422, detail={"code":"document_required","message":"Start PDF extraction from the source document endpoint"})
     job = Job(project_id=project_id, type=body.type)
     db.add(job); db.commit(); db.refresh(job)
     return job
