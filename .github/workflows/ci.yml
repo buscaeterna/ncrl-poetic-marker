@@ -64,6 +64,21 @@ jobs:
         run: |
           curl --fail http://localhost:8080/api/v1/health
           curl --fail http://localhost:8080/
+          project=$(curl --fail -s -X POST http://localhost:8080/api/v1/projects -H 'content-type: application/json' -d '{"name":"CI","workspace":{"corpora":[],"poems":[],"activeId":null,"queue":[]}}')
+          id=$(echo "$project" | jq -r .id)
+          curl --fail "http://localhost:8080/api/v1/projects/$id"
+          job=$(curl --fail -s -X POST "http://localhost:8080/api/v1/projects/$id/jobs" -H 'content-type: application/json' -d '{"type":"workspace_summary"}')
+          job_id=$(echo "$job" | jq -r .id)
+          for i in {1..30}; do status=$(curl --fail -s "http://localhost:8080/api/v1/jobs/$job_id" | jq -r .status); [ "$status" = succeeded ] && break; sleep 1; done
+          test "$status" = succeeded
+          docker compose restart api worker
+          ready=false
+          for i in {1..30}; do
+            if curl --fail --silent http://localhost:8080/api/v1/ready >/dev/null; then ready=true; break; fi
+            sleep 2
+          done
+          test "$ready" = true
+          curl --fail "http://localhost:8080/api/v1/projects/$id"
       - name: Stop stack
         if: always()
         run: docker compose down --volumes --remove-orphans

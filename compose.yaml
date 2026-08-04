@@ -1,28 +1,57 @@
 services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${NCRL_POSTGRES_DB:-ncrl}
+      POSTGRES_USER: ${NCRL_POSTGRES_USER:-ncrl}
+      POSTGRES_PASSWORD: ${NCRL_POSTGRES_PASSWORD:-ncrl-local-only}
+    volumes: [ncrl_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  migrate:
+    build: ./backend
+    command: ["alembic", "upgrade", "head"]
+    environment: &backend-env
+      NCRL_DATABASE_URL: postgresql+psycopg://${NCRL_POSTGRES_USER:-ncrl}:${NCRL_POSTGRES_PASSWORD:-ncrl-local-only}@db:5432/${NCRL_POSTGRES_DB:-ncrl}
+    depends_on:
+      db: {condition: service_healthy}
+    restart: "no"
   api:
     build: ./backend
+    environment: *backend-env
+    depends_on:
+      db: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health', timeout=2)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/ready', timeout=2)"]
       interval: 5s
       timeout: 3s
       retries: 12
       start_period: 5s
     restart: unless-stopped
+  worker:
+    build: ./backend
+    command: ["python", "-m", "app.worker"]
+    environment: *backend-env
+    depends_on:
+      db: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+    restart: unless-stopped
   web:
     build:
       context: .
-      args:
-        NEXT_PUBLIC_RUNTIME_MODE: full
+      args: {NEXT_PUBLIC_RUNTIME_MODE: full}
     restart: unless-stopped
   gateway:
     image: nginx:1.29-alpine
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./gateway/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports: ["${NCRL_BIND_ADDRESS:-127.0.0.1}:8080:8080"]
+    volumes: ["./gateway/nginx.conf:/etc/nginx/conf.d/default.conf:ro"]
     depends_on:
-      api:
-        condition: service_healthy
-      web:
-        condition: service_started
+      api: {condition: service_healthy}
+      web: {condition: service_started}
     restart: unless-stopped
+volumes:
+  ncrl_data:

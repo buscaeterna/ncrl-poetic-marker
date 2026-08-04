@@ -205,3 +205,9 @@ input:focus, select:focus, textarea:focus { border-color: var(--green); box-shad
   .raw-poem-list button small { white-space: normal; }
   .raw-poem-editor { padding: 12px; }.raw-edit-actions { flex-wrap: wrap; }.raw-edit-actions .delete { margin-left: 0; }
 }
+.projects-backdrop { position:fixed; inset:0; z-index:50; display:grid; place-items:center; background:#17201dcc; }
+.projects-dialog { width:min(900px,94vw); max-height:90vh; overflow:auto; padding:20px; background:white; border-radius:8px; box-shadow:0 20px 70px #0008; }
+.projects-dialog header,.project-create,.project-list article,.project-current { display:flex; align-items:center; gap:10px; }
+.projects-dialog header { justify-content:space-between; }.projects-dialog header button { border:0;background:none;font-size:26px;cursor:pointer; }
+.project-note { color:var(--muted);font-size:11px }.project-create input { flex:1;padding:9px }.project-list { margin:18px 0;border-top:1px solid var(--line) }
+.project-list article { padding:10px;border-bottom:1px solid var(--line) }.project-list article div { flex:1 }.project-list small { display:block;color:var(--muted);margin-top:4px }.project-current { flex-wrap:wrap }.project-current h3 { width:100% }.project-job { width:100%;padding:8px;background:var(--panel) }.project-job code { display:block;white-space:pre-wrap;margin:6px 0 }

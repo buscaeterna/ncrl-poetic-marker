@@ -7,6 +7,7 @@ import { RawImportDialog } from "./raw-import-dialog";
 import { createRawTextImport, finalizeRawTextImport, type RawTextImportDraft } from "./raw-text";
 import { ruleById, validateAnnotation } from "./annotation-rules";
 import { RuntimeIndicator } from "./runtime-indicator";
+import { ProjectsDialog } from "./projects-dialog";
 import { effectiveMetadata, metadataFromFields, restoreOriginalValue, setManualValue, type AutomaticMetadata, type DocumentMode, type EditorMetadata, type MetadataKey } from "./editor-metadata";
 
 type Clause = "м" | "ж" | "д" | "г";
@@ -295,6 +296,7 @@ export default function Home() {
   const [queue, setQueue] = useState<string[]>([]);
   const [pendingRawImport, setPendingRawImport] = useState<RawTextImportDraft[] | null>(null);
   const [workspaceReady, setWorkspaceReady] = useState(false);
+  const [projectsOpen, setProjectsOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const meta = useMemo(() => deriveMetadata(doc), [doc]);
   const issues = useMemo(() => validate(doc, meta), [doc, meta]);
@@ -462,6 +464,7 @@ export default function Home() {
 
   return (
     <main className="app-shell">
+      {projectsOpen && <ProjectsDialog workspace={{corpora, poems, activeId, queue}} onClose={() => setProjectsOpen(false)} onLoad={(workspace) => { setCorpora(workspace.corpora); setPoems(workspace.poems); setActiveId(workspace.activeId); setQueue(workspace.queue); const active=workspace.poems.find(p=>p.id===workspace.activeId); if(active)setDoc(poemToDocument(active)); saveWorkspace(workspace); }} />}
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark">СТ</span>
@@ -469,6 +472,7 @@ export default function Home() {
         </div>
         <div className="top-actions">
           <RuntimeIndicator />
+          {process.env.NEXT_PUBLIC_RUNTIME_MODE !== "static" && <button className="button secondary" onClick={() => setProjectsOpen(true)}>Проекты</button>}
           <span className={`save-state ${saved ? "is-saved" : ""}`}><i />{saved ? "Черновик сохранён" : "Сохранение…"}</span>
           <input ref={fileRef} type="file" multiple accept=".txt,.htm,.html,text/plain,text/html" hidden onChange={onFile} />
           <button className="button secondary" onClick={() => fileRef.current?.click()}><Icon>↥</Icon>Импорт</button>
