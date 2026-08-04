@@ -35,3 +35,35 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Build static GitHub Pages site
+        run: npm run build:pages
+
+  backend:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e "backend[test]"
+      - run: python -m pytest backend/tests
+
+  containers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build and start stack
+        run: docker compose up --build --wait --wait-timeout 180
+      - name: Smoke test gateway
+        run: |
+          curl --fail http://localhost:8080/api/v1/health
+          curl --fail http://localhost:8080/
+      - name: Stop stack
+        if: always()
+        run: docker compose down --volumes --remove-orphans

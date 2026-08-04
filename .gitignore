@@ -8,3 +8,8 @@ out/
 npm-debug.log*
 *.tsbuildinfo
 next-env.d.ts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
