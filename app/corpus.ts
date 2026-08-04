@@ -34,6 +34,8 @@ export type ImportedPoem = {
   lines: CorpusLine[];
   status: ProcessingStatus;
   dirty: boolean;
+  /** True after the imported content itself has been edited (unlike `dirty`, this survives autosave). */
+  modified: boolean;
 };
 
 export type ImportedCorpus = {
@@ -41,6 +43,7 @@ export type ImportedCorpus = {
   name: string;
   encoding: SourceEncoding;
   order: number;
+  eol: "\n" | "\r\n";
 };
 
 const id = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
@@ -84,14 +87,15 @@ function metadata(html: string) {
     }
     if (attrs.name) result[attrs.name.toLowerCase()] = attrs.content ?? "";
   }
-  for (const match of html.matchAll(/^@([^\s]+)(?:\s+(.*))?$/gm)) result[match[1]] = (match[2] ?? "").trim();
+  // Deliberately exclude newlines: every NKRЯ field is one physical line, including empty fields.
+  for (const match of html.matchAll(/^@([^\s]+)(?:[ \t]+([^\r\n]*))?[ \t]*\r?$/gm)) result[match[1]] = (match[2] ?? "").trim();
   return result;
 }
 
 export function parsePoem(html: string, sourceName: string, sourceOrder: number, corpusId: string): ImportedPoem {
   const fields = metadata(html);
   const structures: StructuralElement[] = [];
-  const elementPattern = /<p\b([^>]*\bclass\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*)>([\s\S]*?)(?=<\/p\s*>|<p\b|<\/body\s*>|$)/gi;
+  const elementPattern = /<p\b([^>]*\bclass\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*)>([\s\S]*?)(?:<\/p\s*>|(?=<p\b|<\/body\s*>|$))/gi;
   for (const match of html.matchAll(elementPattern)) {
     const className = (match[2] ?? match[3] ?? match[4] ?? "").split(/\s+/)[0];
     const canonical = ({ h1: "H1", h2: "H2", h3: "H3", date: "date", epigraf: "epigraf", verse: "verse" } as const)[className.toLowerCase() as "h1"];
@@ -111,41 +115,94 @@ export function parsePoem(html: string, sourceName: string, sourceOrder: number,
   return {
     id: id(), corpusId, sourceName, sourceOrder, author: fields.author ?? "", title,
     date: fields.date ?? "????", cycle: fields["цикл"] ?? "", fields, structures, originalHtml: html,
-    lines, status: "unprocessed", dirty: false,
+    lines, status: "unprocessed", dirty: false, modified: false,
   };
 }
 
 export function importCorpusBytes(bytes: ArrayBuffer | Uint8Array, name: string, order = 0) {
   const decoded = decodeCorpus(bytes);
-  const corpus: ImportedCorpus = { id: id(), name, encoding: decoded.encoding, order };
+  const corpus: ImportedCorpus = { id: id(), name, encoding: decoded.encoding, order, eol: decoded.text.includes("\r\n") ? "\r\n" : "\n" };
   const documents = splitCorpus(decoded.text).map((part) => parsePoem(part.html, part.sourceName, part.sourceOrder, corpus.id));
   return { corpus, documents };
 }
 
 export function exportPoem(poem: ImportedPoem, renderedLines?: CorpusLine[]) {
+  if (!poem.modified) return poem.originalHtml;
   const lines = renderedLines ?? poem.lines;
   const fields = { ...poem.fields, author: poem.author, title: poem.title, date: poem.date, "цикл": poem.cycle };
   const head = Object.entries(fields).filter(([key]) => ["author", "title", "date"].includes(key))
     .map(([key, value]) => `<meta name='${esc(key)}' content='${esc(value)}'>`);
+  const authorTitle = poem.author.replace(/^(.+?)\s+((?:[А-ЯЁA-Z]\.?\s*){1,3})$/u, (_all, surname, initials) => `${initials.replace(/\s/g, "")} ${surname}`);
+  head.unshift(`<title>${esc([authorTitle, poem.title].filter(Boolean).join(". "))}</title>`);
   const nkrya = Object.entries(fields).filter(([key]) => !["author", "title", "date"].includes(key))
     .map(([key, value]) => `@${key}${value ? ` ${value}` : ""}`);
   const hasOriginalVerse = poem.structures.some((item) => item.kind === "verse");
   const legacyH1 = !hasOriginalVerse && poem.structures.find((item) => item.kind === "H1" && item.lines.length > 1 && item.lines[0].trim() === poem.title.trim());
-  const nonVerse = poem.structures.filter((item) => item.kind !== "verse").map((item) => item === legacyH1
-    ? `<p class=H1>${[poem.title, ...lines.map((line) => line.text)].map(esc).join("<br>\n")}</p>` : item.html);
   const stanzas: CorpusLine[][] = [];
   for (const line of lines) {
     if (!stanzas.length || line.breakBefore) stanzas.push([]);
     stanzas.at(-1)!.push(line);
   }
-  const verse = legacyH1 ? [] : stanzas.map((stanza) => `<p class=verse>${stanza.map((line) => {
+  const renderLines = (stanza: CorpusLine[]) => stanza.map((line) => {
     const annotation = line.meter ? `<#${line.meter}${line.starred ? "*" : ""}${line.feet}${line.clause}${line.scheme ? ` ${line.scheme}` : ""}>` : "";
     return `${annotation}${esc(line.text)}`;
-  }).join("<br>\n")}</p>`);
-  return ["<html>", "<head>", ...head, ...nkrya, "</head>", "<body>", ...nonVerse, ...verse, "</body>", "</html>"].join("\n");
+  }).join("<br>\n");
+
+  let stanzaIndex = 0;
+  let sawVerse = false;
+  const structuralPattern = /<p\b([^>]*\bclass\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*)>[\s\S]*?(?:<\/p\s*>|(?=<p\b|<\/body\s*>|$))/gi;
+  let body = poem.originalHtml.replace(structuralPattern, (original, attrs, doubleClass, singleClass, bareClass) => {
+    const kind = (doubleClass ?? singleClass ?? bareClass ?? "").split(/\s+/)[0].toLowerCase();
+    const opening = `<p${attrs}>`;
+    if (kind === "verse") {
+      sawVerse = true;
+      const stanza = stanzas[stanzaIndex++] ?? [];
+      const extra = stanzaIndex === poem.structures.filter((item) => item.kind === "verse").length
+        ? stanzas.slice(stanzaIndex).map((item) => `\n${opening}${renderLines(item)}</p>`).join("") : "";
+      if (extra) stanzaIndex = stanzas.length;
+      return `${opening}${renderLines(stanza)}</p>${extra}`;
+    }
+    if (legacyH1 && kind === "h1") return `${opening}${[poem.title, ...lines.map((line) => line.text)].map(esc).join("<br>\n")}</p>`;
+    return /<\/p\s*>$/i.test(original) ? original : `${original}</p>`;
+  });
+  if (!legacyH1 && !sawVerse && stanzas.length) {
+    const verses = stanzas.map((stanza) => `<p class=verse>${renderLines(stanza)}</p>`).join("\n");
+    body = /<\/body\s*>/i.test(body) ? body.replace(/<\/body\s*>/i, `${verses}\n</body>`) : `${body}\n${verses}`;
+  }
+
+  const newHead = `<head>\n${[...head, ...nkrya].join("\n")}\n</head>`;
+  const placeholder = "__NCRL_HEAD_PLACEHOLDER__";
+  const hadHead = /<head\b[^>]*>[\s\S]*?<\/head\s*>/i.test(body);
+  body = body.replace(/<head\b[^>]*>[\s\S]*?<\/head\s*>/gi, placeholder).replace(/<\/?head\b[^>]*>/gi, "");
+  if (hadHead) body = body.replace(placeholder, newHead).replaceAll(placeholder, "");
+  else if (/<html\b[^>]*>/i.test(body)) body = body.replace(/<html\b[^>]*>/i, (tag) => `${tag}\n${newHead}`);
+  else body = `${newHead}\n${body}`;
+  return body;
 }
 
 export function exportCorpus(corpus: ImportedCorpus, poems: ImportedPoem[]) {
+  const eol = corpus.eol ?? "\n";
   return poems.filter((poem) => poem.corpusId === corpus.id).sort((a, b) => a.sourceOrder - b.sourceOrder)
-    .map((poem) => `<<<--- ${poem.sourceName}>>>\n${exportPoem(poem)}`).join("\n");
+    .map((poem) => `<<<--- ${poem.sourceName}>>>${eol}${exportPoem(poem).replace(/\r?\n/g, eol)}`).join(eol);
+}
+
+export function encodeCorpus(value: string, encoding: SourceEncoding): Uint8Array<ArrayBuffer> {
+  if (encoding === "utf-8") return new TextEncoder().encode(value);
+  const highBytes = Uint8Array.from({ length: 128 }, (_, index) => index + 128);
+  const table = new TextDecoder("windows-1251").decode(highBytes);
+  const bytes: number[] = [];
+  for (const character of value) {
+    const code = character.codePointAt(0)!;
+    if (code < 128) bytes.push(code);
+    else {
+      const index = table.indexOf(character);
+      if (index < 0) throw new Error(`Символ «${character}» нельзя сохранить в Windows-1251. Экспортируйте корпус в UTF-8.`);
+      bytes.push(index + 128);
+    }
+  }
+  return Uint8Array.from(bytes);
+}
+
+export function exportCorpusBytes(corpus: ImportedCorpus, poems: ImportedPoem[]) {
+  return encodeCorpus(exportCorpus(corpus, poems), corpus.encoding);
 }

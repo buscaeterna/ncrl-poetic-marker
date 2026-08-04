@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { decodeCorpus, exportCorpus, importCorpusBytes, parsePoem, splitCorpus } from "../app/corpus.ts";
+import { decodeCorpus, encodeCorpus, exportCorpus, exportCorpusBytes, exportPoem, importCorpusBytes, parsePoem, splitCorpus } from "../app/corpus.ts";
 
 const encoder = new TextEncoder();
 const fixture = `<<<--- Gorenko-001.htm>>>
@@ -78,4 +78,90 @@ test("queue edits can be retained while switching, deleted, and cleared", () => 
   const afterDelete = edited.filter((poem) => poem.id !== edited[1].id);
   assert.equal(afterDelete.length, 2);
   assert.deepEqual(afterDelete.filter(() => false), []);
+});
+
+const damagedFixture = `<<<--- Matveeva-001.htm>>>
+<html><head>
+<meta name='author' content='Матвеева Н.Н.'>
+<meta name='title' content='НАШ ГЕРБ'>
+<meta name='date' content='19??'>
+@жанр стихотворение
+@цикл
+@строфика
+@гр_строфика
+@метр
+@клаузула |
+@рифма |
+@доп
+</head>
+</head><body>
+<p class=H1 id=1>НАШ ГЕРБ
+<p class=H2 id=1.1>Подзаголовок
+<p class=verse id=v1>Первая<br>Вторая
+<p class=date id=d1>19??
+<p class=epigraf id=e1>Посвящение
+<p class=H3 id=1.1.1>Раздел
+<p class=verse id=v2>Третья
+</body></html>`;
+
+test("empty NKRЯ fields are parsed independently and never consume head markup", () => {
+  const poem = importCorpusBytes(encoder.encode(damagedFixture), "metadata.txt").documents[0];
+  assert.deepEqual(Object.fromEntries(["цикл", "строфика", "гр_строфика", "метр", "клаузула", "рифма", "доп"].map((key) => [key, poem.fields[key]])), {
+    "цикл": "", "строфика": "", "гр_строфика": "", "метр": "", "клаузула": "|", "рифма": "|", "доп": "",
+  });
+  assert.notEqual(poem.fields["доп"], "</head>");
+});
+
+test("edited export has one complete head, a title, and one metadata field per line", () => {
+  const poem = { ...importCorpusBytes(encoder.encode(damagedFixture), "head.txt").documents[0], modified: true };
+  const output = exportPoem(poem);
+  assert.equal((output.match(/<head>/gi) ?? []).length, 1);
+  assert.equal((output.match(/<\/head>/gi) ?? []).length, 1);
+  assert.match(output, /<title>Н\.Н\. Матвеева\. НАШ ГЕРБ<\/title>/);
+  assert.match(output, /@цикл\n@строфика\n@гр_строфика\n@метр\n@клаузула \|\n@рифма \|\n@доп\n<\/head>/);
+});
+
+test("edited structural elements close, retain ids, order, and separate verses", () => {
+  const poem = importCorpusBytes(encoder.encode(damagedFixture), "structure.txt").documents[0];
+  poem.modified = true;
+  poem.lines[0] = { ...poem.lines[0], text: "Исправленная" };
+  const output = exportPoem(poem);
+  for (const kind of ["H1", "H2", "H3", "date", "epigraf", "verse"]) assert.match(output, new RegExp(`<p class=${kind}[^>]*>[\\s\\S]*?<\\/p>`, "i"));
+  assert.equal((output.match(/<p\b/gi) ?? []).length, (output.match(/<\/p>/gi) ?? []).length);
+  for (const value of ["1", "1.1", "v1", "d1", "e1", "1.1.1", "v2"]) assert.match(output, new RegExp(`id=${value}(?:\\s|>)`));
+  const positions = ["class=H1", "class=H2", "id=v1", "class=date", "class=epigraf", "class=H3", "id=v2"].map((token) => output.indexOf(token));
+  assert.deepEqual(positions, [...positions].sort((a, b) => a - b));
+  assert.equal((output.match(/<p class=verse/gi) ?? []).length, 2);
+  assert.match(output, /<p class=verse id=v1>Исправленная<br>\nВторая<\/p>/);
+});
+
+test("unchanged imported HTML is emitted verbatim without structural loss", () => {
+  const { corpus, documents } = importCorpusBytes(encoder.encode(damagedFixture), "unchanged.txt");
+  assert.equal(exportPoem(documents[0]), documents[0].originalHtml);
+  assert.equal(splitCorpus(exportCorpus(corpus, documents))[0].html, documents[0].originalHtml);
+});
+
+test("UTF-8 and Windows-1251 corpus exports retain encoding, content, markers, and order", () => {
+  const twoDocuments = `${damagedFixture}\n<<<--- Matveeva-002.htm>>>\n<html><head><meta name='author' content='Матвеева'><meta name='title' content='ДВА'></head><body><p class=verse>Ёлка</p></body></html>`;
+  const utf = importCorpusBytes(encoder.encode(twoDocuments), "utf.txt");
+  const utfBytes = exportCorpusBytes(utf.corpus, utf.documents);
+  assert.equal(new TextDecoder("utf-8", { fatal: true }).decode(utfBytes), exportCorpus(utf.corpus, utf.documents));
+
+  const cp = importCorpusBytes(encodeWindows1251(twoDocuments.replaceAll("\n", "\r\n")), "cp.txt");
+  assert.equal(cp.corpus.encoding, "windows-1251");
+  assert.equal(cp.corpus.eol, "\r\n");
+  assert.equal(cp.documents[0].fields["доп"], "");
+  const cpBytes = exportCorpusBytes(cp.corpus, cp.documents);
+  assert.throws(() => new TextDecoder("utf-8", { fatal: true }).decode(cpBytes));
+  const decoded = new TextDecoder("windows-1251", { fatal: true }).decode(cpBytes);
+  assert.equal(decoded.includes("�"), false);
+  assert.equal((decoded.match(/^<<<---/gm) ?? []).length, 2);
+  assert.ok(decoded.indexOf("Matveeva-001.htm") < decoded.indexOf("Matveeva-002.htm"));
+  const reimported = importCorpusBytes(cpBytes, "again.txt");
+  assert.equal(reimported.documents.some((poem) => poem.originalHtml.includes("�")), false);
+  assert.deepEqual(reimported.documents.map((poem) => poem.sourceName), ["Matveeva-001.htm", "Matveeva-002.htm"]);
+});
+
+test("Windows-1251 encoding rejects unrepresentable edits with actionable guidance", () => {
+  assert.throws(() => encodeCorpus("текст 😀", "windows-1251"), /UTF-8/);
 });
