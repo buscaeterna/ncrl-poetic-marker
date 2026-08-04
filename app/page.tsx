@@ -4,6 +4,7 @@ import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { decodeCorpus, encodeCorpus, exportCorpusBytes, exportPoem, importCorpusBytes, splitCorpus, type ImportedCorpus, type ImportedPoem, type ProcessingStatus } from "./corpus";
 import { loadWorkspace, saveWorkspace } from "./corpus-db";
 import { RawImportDialog } from "./raw-import-dialog";
+import { PdfImportDialog } from "./pdf-import-dialog";
 import { createRawTextImport, finalizeRawTextImport, type RawTextImportDraft } from "./raw-text";
 import { ruleById, validateAnnotation } from "./annotation-rules";
 import { RuntimeIndicator } from "./runtime-indicator";
@@ -297,6 +298,7 @@ export default function Home() {
   const [pendingRawImport, setPendingRawImport] = useState<RawTextImportDraft[] | null>(null);
   const [workspaceReady, setWorkspaceReady] = useState(false);
   const [projectsOpen, setProjectsOpen] = useState(false);
+  const [pdfOpen, setPdfOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const meta = useMemo(() => deriveMetadata(doc), [doc]);
   const issues = useMemo(() => validate(doc, meta), [doc, meta]);
@@ -476,6 +478,7 @@ export default function Home() {
           <span className={`save-state ${saved ? "is-saved" : ""}`}><i />{saved ? "Черновик сохранён" : "Сохранение…"}</span>
           <input ref={fileRef} type="file" multiple accept=".txt,.htm,.html,text/plain,text/html" hidden onChange={onFile} />
           <button className="button secondary" onClick={() => fileRef.current?.click()}><Icon>↥</Icon>Импорт</button>
+          {process.env.NEXT_PUBLIC_RUNTIME_MODE !== "static" && <button className="button secondary" onClick={() => setPdfOpen(true)}>Импорт PDF</button>}
           <button className="button primary" onClick={download}><Icon>↓</Icon>Скачать HTML</button>
         </div>
       </header>
@@ -603,6 +606,7 @@ export default function Home() {
         </aside>
       </section>
       {pendingRawImport && <RawImportDialog drafts={pendingRawImport} onCancel={() => setPendingRawImport(null)} onConfirm={confirmRawImport} />}
+      {pdfOpen && <PdfImportDialog onClose={() => setPdfOpen(false)} onReviewed={(name,text) => { const bytes=new TextEncoder().encode(text); if(splitCorpus(text).length){const item=importCorpusBytes(bytes,name,corpora.length);setCorpora(v=>[...v,item.corpus]);setPoems(v=>[...v,...item.documents]);setQueue(v=>[...v,...item.documents.map(p=>p.id)]);}else setPendingRawImport([createRawTextImport(bytes,name,corpora.length)]);setPdfOpen(false); }} />}
     </main>
   );
 }

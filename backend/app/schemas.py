@@ -14,8 +14,8 @@ class HealthResponse(BaseModel):
 class CapabilitiesResponse(BaseModel):
     workspace: bool = True
     jobs: bool = True
-    pdf: bool = False
-    ocr: bool = False
+    pdf: bool = True
+    ocr: bool = True
     stress: bool = False
     meter: bool = False
     local_model: bool = False
@@ -57,7 +57,7 @@ class ProjectDetail(ProjectSummary):
 
 
 class JobCreate(BaseModel):
-    type: Literal["workspace_summary"]
+    type: Literal["workspace_summary", "pdf_extract"]
 
 
 class JobResponse(BaseModel):

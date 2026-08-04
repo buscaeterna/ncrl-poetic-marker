@@ -5,7 +5,8 @@ from datetime import timedelta
 from sqlalchemy import select
 
 from .database import SessionLocal
-from .models import Job, JobStatus, Project, utcnow
+from .models import Job, JobStatus, Project, SourceDocument, SourcePage, utcnow
+from .pdf import extract_page, safe_path
 from .settings import settings
 
 stopping = False
@@ -58,8 +59,10 @@ def process_one() -> bool:
         try:
             if job is None:
                 return True
-            if job.type != "workspace_summary":
-                raise ValueError(f"unsupported job type: {job.type}")
+            if job.type == "pdf_extract":
+                process_pdf(job.id)
+                return True
+            if job.type != "workspace_summary": raise ValueError(f"unsupported job type: {job.type}")
             project = db.get(Project, job.project_id)
             if project is None:
                 raise ValueError("project no longer exists")
@@ -71,6 +74,38 @@ def process_one() -> bool:
         if job:
             job.finished_at = job.updated_at = utcnow()
     return True
+
+def process_pdf(job_id) -> None:
+    with SessionLocal.begin() as db:
+        job = db.get(Job, job_id); doc = db.get(SourceDocument, job.result["document_id"])
+        if not doc: raise ValueError("source document no longer exists")
+        doc.status = "extracting"; path = safe_path(doc.storage_key); total = doc.page_count
+    methods = []
+    for number in range(1, total + 1):
+        with SessionLocal() as db:
+            job = db.get(Job, job_id)
+            if stopping or job.status == JobStatus.cancel_requested:
+                job.status = JobStatus.cancelled; job.finished_at = utcnow(); db.get(SourceDocument, job.result["document_id"]).status = "cancelled"; db.commit(); return
+        try:
+            preview_key = f"{doc.id}/previews/{number}.png"
+            result = extract_page(path, number, safe_path(preview_key))
+            error = None
+        except Exception as exc:
+            result = {"embedded": None, "ocr": None, "text": "", "method": None, "confidence": None, "warnings": [f"Ошибка страницы: {exc}"], "rotation": 0}; error = str(exc)
+        with SessionLocal.begin() as db:
+            page = db.scalar(select(SourcePage).where(SourcePage.document_id == doc.id, SourcePage.page_number == number)) or SourcePage(document_id=doc.id, page_number=number)
+            page.method, page.raw_text, page.edited_text = result["method"], result["text"], result["text"]
+            page.embedded_text, page.ocr_text, page.confidence = result["embedded"], result["ocr"], result["confidence"]
+            page.warnings, page.rotation, page.preview_key = result["warnings"], result["rotation"], preview_key
+            if error: page.review_status = "error"
+            db.add(page); job = db.get(Job, job_id); job.progress = number / total; job.updated_at = utcnow()
+            methods.append(result["method"])
+    with SessionLocal.begin() as db:
+        job = db.get(Job, job_id); doc = db.get(SourceDocument, doc.id)
+        doc.kind = "mixed_pdf" if len(set(methods)) > 1 else ("scanned_pdf" if methods and methods[0] == "ocr" else "digital_pdf")
+        doc.status = "review"; doc.revision += 1
+        job.status, job.progress, job.finished_at = JobStatus.succeeded, 1, utcnow()
+        job.result = {"document_id": str(doc.id), "pages": total, "warnings": sum(m is None for m in methods)}
 
 
 def run() -> None:

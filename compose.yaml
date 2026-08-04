@@ -16,12 +16,15 @@ services:
     command: ["alembic", "upgrade", "head"]
     environment: &backend-env
       NCRL_DATABASE_URL: postgresql+psycopg://${NCRL_POSTGRES_USER:-ncrl}:${NCRL_POSTGRES_PASSWORD:-ncrl-local-only}@db:5432/${NCRL_POSTGRES_DB:-ncrl}
+      NCRL_FILES_DIR: /var/lib/ncrl/files
+    volumes: [ncrl_files:/var/lib/ncrl/files]
     depends_on:
       db: {condition: service_healthy}
     restart: "no"
   api:
     build: ./backend
     environment: *backend-env
+    volumes: [ncrl_files:/var/lib/ncrl/files]
     depends_on:
       db: {condition: service_healthy}
       migrate: {condition: service_completed_successfully}
@@ -36,6 +39,7 @@ services:
     build: ./backend
     command: ["python", "-m", "app.worker"]
     environment: *backend-env
+    volumes: [ncrl_files:/var/lib/ncrl/files]
     depends_on:
       db: {condition: service_healthy}
       migrate: {condition: service_completed_successfully}
@@ -55,3 +59,4 @@ services:
     restart: unless-stopped
 volumes:
   ncrl_data:
+  ncrl_files:

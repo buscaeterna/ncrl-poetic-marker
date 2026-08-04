@@ -21,3 +21,11 @@ GitHub Pages остаётся полностью статическим: сер�
 ## Разработка
 
 Node.js 22: `npm ci`, `npm test`, `npm run lint`, `npm run build`, `npm run build:pages`. Python 3.12: `python -m pip install -e "backend[test]"`, `python -m pytest backend/tests`. API: `/api/v1/ready`, `/api/v1/capabilities`, `/api/docs`. Максимум запроса workspace — 20 MiB (FastAPI и nginx возвращают 413).
+
+## PDF и локальный OCR
+
+Полный локальный режим поддерживает пакетную загрузку PDF и обязательную постраничную проверку перед импортом. Цифровой текст извлекается PyMuPDF; для страниц без пригодного слоя выполняется CPU-OCR Tesseract (`rus+eng`). PDF и preview остаются в named volume `ncrl_files`, а метаданные и исправления — в PostgreSQL. Данные не отправляются в облако; GitHub Pages не показывает эту функцию.
+
+Docker Desktop 4+ или совместимый Docker Engine поддерживаются на Windows, macOS и Linux (`linux/amd64`, `linux/arm64`); GPU не требуется. Образ стал больше из-за OCR. Лимиты: `NCRL_MAX_PDF_BYTES` (200 MiB), `NCRL_MAX_PDF_PAGES` (1000), `NCRL_PDF_RENDER_DPI`, `NCRL_PDF_MAX_PIXELS`, `NCRL_OCR_PAGE_TIMEOUT_SECONDS`.
+
+Резервная копия включает дамп `docker compose exec db pg_dump -U ncrl ncrl` и архив volume `ncrl_files`. Удаление проекта/источника удаляет связанные файлы. OCR не является корректурой: колонки, колонтитулы, переносы, дореформенная орфография, плохой контраст и сканы могут распознаваться ошибочно. Каждую страницу, затем автора, заголовки и границы произведений требуется проверить вручную. Имя PDF не принимается за автора.
