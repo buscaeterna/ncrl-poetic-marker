@@ -36,6 +36,10 @@ export type ImportedPoem = {
   dirty: boolean;
   /** True after the imported content itself has been edited (unlike `dirty`, this survives autosave). */
   modified: boolean;
+  /** Editor-only metadata state is persisted in IndexedDB between selections. */
+  editorMetadata?: import("./editor-metadata").EditorMetadata;
+  /** Raw text has no authoritative imported annotation, even though its generated HTML has empty fields. */
+  rawText?: boolean;
 };
 
 export type ImportedCorpus = {
@@ -44,6 +48,8 @@ export type ImportedCorpus = {
   encoding: SourceEncoding;
   order: number;
   eol: "\n" | "\r\n";
+  /** Exact decoded source permits a byte-for-byte no-op export. */
+  originalSource?: string;
 };
 
 const id = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
@@ -121,7 +127,7 @@ export function parsePoem(html: string, sourceName: string, sourceOrder: number,
 
 export function importCorpusBytes(bytes: ArrayBuffer | Uint8Array, name: string, order = 0) {
   const decoded = decodeCorpus(bytes);
-  const corpus: ImportedCorpus = { id: id(), name, encoding: decoded.encoding, order, eol: decoded.text.includes("\r\n") ? "\r\n" : "\n" };
+  const corpus: ImportedCorpus = { id: id(), name, encoding: decoded.encoding, order, eol: decoded.text.includes("\r\n") ? "\r\n" : "\n", originalSource: decoded.text };
   const documents = splitCorpus(decoded.text).map((part) => parsePoem(part.html, part.sourceName, part.sourceOrder, corpus.id));
   return { corpus, documents };
 }
@@ -181,8 +187,10 @@ export function exportPoem(poem: ImportedPoem, renderedLines?: CorpusLine[]) {
 }
 
 export function exportCorpus(corpus: ImportedCorpus, poems: ImportedPoem[]) {
+  const corpusPoems = poems.filter((poem) => poem.corpusId === corpus.id);
+  if (corpus.originalSource !== undefined && corpusPoems.every((poem) => !poem.modified)) return corpus.originalSource;
   const eol = corpus.eol ?? "\n";
-  return poems.filter((poem) => poem.corpusId === corpus.id).sort((a, b) => a.sourceOrder - b.sourceOrder)
+  return corpusPoems.sort((a, b) => a.sourceOrder - b.sourceOrder)
     .map((poem) => `<<<--- ${poem.sourceName}>>>${eol}${exportPoem(poem).replace(/\r?\n/g, eol)}`).join(eol);
 }
 

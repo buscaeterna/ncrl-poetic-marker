@@ -141,6 +141,12 @@ test("unchanged imported HTML is emitted verbatim without structural loss", () =
   assert.equal(splitCorpus(exportCorpus(corpus, documents))[0].html, documents[0].originalHtml);
 });
 
+test("unchanged corpus export is byte-for-byte identical", () => {
+  const source = damagedFixture.replaceAll("\n", "\r\n") + "\r\n";
+  const imported = importCorpusBytes(encoder.encode(source), "exact.txt");
+  assert.deepEqual(exportCorpusBytes(imported.corpus, imported.documents), encoder.encode(source));
+});
+
 test("UTF-8 and Windows-1251 corpus exports retain encoding, content, markers, and order", () => {
   const twoDocuments = `${damagedFixture}\n<<<--- Matveeva-002.htm>>>\n<html><head><meta name='author' content='Матвеева'><meta name='title' content='ДВА'></head><body><p class=verse>Ёлка</p></body></html>`;
   const utf = importCorpusBytes(encoder.encode(twoDocuments), "utf.txt");

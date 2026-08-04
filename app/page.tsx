@@ -6,6 +6,7 @@ import { loadWorkspace, saveWorkspace } from "./corpus-db";
 import { RawImportDialog } from "./raw-import-dialog";
 import { createRawTextImport, finalizeRawTextImport, type RawTextImportDraft } from "./raw-text";
 import { ruleById, validateAnnotation } from "./annotation-rules";
+import { effectiveMetadata, metadataFromFields, restoreOriginalValue, setManualValue, type AutomaticMetadata, type DocumentMode, type EditorMetadata, type MetadataKey } from "./editor-metadata";
 
 type Clause = "м" | "ж" | "д" | "г";
 type Meter = "" | "Я" | "Х" | "Д" | "Ан" | "Аф" | "Дк" | "Тк" | "Ак" | "О";
@@ -31,8 +32,9 @@ type DocumentState = {
   graphicStrophe: string;
   rhyme: string;
   rhymeScheme: string;
-  mode: "auto" | "heterometry" | "polymetry" | "free";
+  mode: DocumentMode;
   effects: string[];
+  metadata: EditorMetadata;
   lines: VerseLine[];
 };
 
@@ -69,6 +71,7 @@ const sample: DocumentState = {
   rhymeScheme: "",
   mode: "auto",
   effects: ["переменная анакруса"],
+  metadata: metadataFromFields({ "строфика": "0", "гр_строфика": "", "рифма": "спорадическая", "доп": "переменная анакруса" }, true),
   lines: [
     ["За ше`сть или се`мь или во`семь сы`тых пого`дой ¦ле`т", "Дк", 6, "м", "1*2*2*1*2*1*0"],
     ["Метро` и кино` успе`ли сли`ться в ¦одно`", "Дк", 5, "м", "1*2*1*1*2*0"],
@@ -204,7 +207,7 @@ function clauseFor(lines: VerseLine[]) {
   return `вольная | ${["д", "ж", "м", "г"].filter((x) => clauses.includes(x as Clause)).join(", ")}`;
 }
 
-function deriveMetadata(doc: DocumentState) {
+function deriveAutomaticMetadata(doc: DocumentState): AutomaticMetadata & { clausula: string; rhyme: string; effects: string[] } {
   const parts = groupByParts(doc.lines);
   const polymetric = doc.mode === "polymetry";
   const meter = polymetric
@@ -223,17 +226,21 @@ function deriveMetadata(doc: DocumentState) {
   return { meter, formula, stopness, clausula, rhyme, effects };
 }
 
+function deriveMetadata(doc: DocumentState) {
+  const automatic = deriveAutomaticMetadata(doc);
+  return { ...automatic, ...effectiveMetadata({ ...doc.metadata, mode: doc.mode, effects: doc.effects, strophe: doc.strophe, graphicStrophe: doc.graphicStrophe }, automatic) };
+}
+
 function validate(doc: DocumentState, meta: ReturnType<typeof deriveMetadata>): Issue[] {
   const issues: Issue[] = [];
   if (!doc.lines.length) issues.push({ level: "error", title: "Нет стиховых строк", detail: "Добавьте или импортируйте текст." });
   doc.lines.forEach((line, index) => {
     if (!line.meter) issues.push({ level: "error", title: "Не указан метр строки", detail: "Выберите метр после проверки словесных ударений.", line: index + 1 });
-    if (!line.feet) issues.push({ level: "error", title: "Не указана стопность", detail: "Стопность обязательна для каждой строки.", line: index + 1 });
     if (!line.text.includes("`")) issues.push({ level: "warning", title: "Нет знаков ударения", detail: "Проверьте все словоформы и отметьте ударные гласные.", line: index + 1 });
     if (line.meter === "О" && countSyllables(line.text) > 1) issues.push({ level: "error", title: "Сомнительный односложный метр", detail: "О применяется к действительно односложной строке; проверьте Я1 или Х1.", line: index + 1 });
   });
   if (doc.mode === "polymetry" && groupByParts(doc.lines).length < 2) issues.push({ level: "error", title: "Нет частей полиметрии", detail: "Отметьте начало второй метрически самостоятельной части." });
-  issues.push(...validateAnnotation({ meter: meta.meter, formula: meta.formula, stopness: meta.stopness, effects: doc.effects,
+  issues.push(...validateAnnotation({ meter: meta.meter, formula: meta.formula, stopness: meta.stopness, effects: meta.effects,
     strophe: doc.strophe, graphicStrophe: doc.graphicStrophe, hasGraphicBreaks: doc.lines.some((line) => line.breakBefore), lines: doc.lines
   }));
   if (!issues.length) issues.push({ level: "info", title: "Формальных ошибок нет", detail: "Метрические решения и словесные ударения всё равно требуют экспертной проверки." });
@@ -260,11 +267,13 @@ function buildExport(doc: DocumentState, meta: ReturnType<typeof deriveMetadata>
 }
 
 function poemToDocument(poem: ImportedPoem): DocumentState {
+  const metadata = poem.editorMetadata ?? metadataFromFields(poem.fields, poem.rawText);
+  const rhyme = metadata.rhyme;
   return {
     author: poem.author, title: poem.title, date: poem.date, cycle: poem.cycle,
-    strophe: poem.fields["строфика"] || "0", graphicStrophe: poem.fields["гр_строфика"] || "",
-    rhyme: poem.fields["рифма"]?.split(" | ")[0] || "0", rhymeScheme: poem.fields["рифма"]?.split(" | ")[1] || "",
-    mode: "auto", effects: poem.fields["доп"]?.split(",").map((value) => value.trim()).filter(Boolean) || [],
+    strophe: metadata.strophe, graphicStrophe: metadata.graphicStrophe,
+    rhyme: rhyme.split(" | ")[0] || "0", rhymeScheme: rhyme.split(" | ")[1] || "",
+    mode: metadata.mode, effects: metadata.effects, metadata,
     lines: poem.lines as VerseLine[],
   };
 }
@@ -300,7 +309,14 @@ export default function Home() {
         if (active) setDoc(poemToDocument(active));
       } else {
         const cached = localStorage.getItem("nkrya-poetry-draft");
-        if (cached) try { setDoc(JSON.parse(cached)); } catch { /* compatibility with a malformed legacy draft */ }
+        if (cached) try {
+          const legacy = JSON.parse(cached) as DocumentState;
+          setDoc({ ...legacy, metadata: legacy.metadata ?? metadataFromFields({
+            "строфика": legacy.strophe, "гр_строфика": legacy.graphicStrophe,
+            "рифма": legacy.rhymeScheme ? `${legacy.rhyme} | ${legacy.rhymeScheme}` : legacy.rhyme,
+            "доп": legacy.effects.join(", "),
+          }, true) });
+        } catch { /* compatibility with a malformed legacy draft */ }
       }
     }).finally(() => setWorkspaceReady(true));
   }, []);
@@ -326,10 +342,19 @@ export default function Home() {
     setSaved(false);
     setDoc((current) => {
       const next = typeof updater === "function" ? updater(current) : updater;
-      if (activeId) setPoems((items) => items.map((poem) => poem.id === activeId ? {
-        ...poem, author: next.author, title: next.title, date: next.date, cycle: next.cycle,
-        lines: next.lines, dirty: true, modified: true, fields: { ...poem.fields, "строфика": next.strophe, "гр_строфика": next.graphicStrophe },
-      } : poem));
+      if (activeId) setPoems((items) => items.map((poem) => {
+        if (poem.id !== activeId) return poem;
+        const editorMetadata = { ...next.metadata, mode: next.mode, effects: next.effects, strophe: next.strophe, graphicStrophe: next.graphicStrophe,
+          rhyme: next.rhymeScheme ? `${next.rhyme} | ${next.rhymeScheme}` : next.rhyme };
+        const effective = effectiveMetadata(editorMetadata, deriveAutomaticMetadata(next));
+        return {
+          ...poem, author: next.author, title: next.title, date: next.date, cycle: next.cycle,
+          lines: next.lines, dirty: true, modified: true, editorMetadata,
+          fields: { ...poem.fields, "метр": effective.meter, "формула": effective.formula, "стопность": effective.stopness,
+            "клаузула": effective.clausula, "рифма": effective.rhyme, "доп": effective.effects.join(", "),
+            "строфика": effective.strophe, "гр_строфика": effective.graphicStrophe },
+        };
+      }));
       return next;
     });
   };
@@ -337,6 +362,10 @@ export default function Home() {
   const patchLine = (index: number, value: Partial<VerseLine>) => updateDoc((current) => ({
     ...current, lines: current.lines.map((line, i) => i === index ? { ...line, ...value } : line),
   }));
+  const patchMetadata = (key: MetadataKey, value: string) => updateDoc((current) => ({
+    ...current, metadata: setManualValue(current.metadata, key, value),
+  }));
+  const automaticMetadata = useMemo(() => deriveAutomaticMetadata(doc), [doc]);
 
   const runAnalysis = () => updateDoc((current) => ({
     ...current,
@@ -493,6 +522,10 @@ export default function Home() {
           <div className="checks">
             {EFFECTS.map((effect) => <label className="check" key={effect}><input type="checkbox" checked={doc.effects.includes(effect)} onChange={(e) => patchDoc({ effects: e.target.checked ? [...doc.effects, effect] : doc.effects.filter((x) => x !== effect) })} /><span>{effect}</span></label>)}
           </div>
+          {doc.effects.filter((effect) => !EFFECTS.includes(effect)).length > 0 && <div className="custom-effects" aria-label="Нестандартные эффекты">
+            <small>Импортированные пометы</small>
+            {doc.effects.filter((effect) => !EFFECTS.includes(effect)).map((effect) => <span key={effect}>{effect}<button aria-label={`Удалить ${effect}`} onClick={() => patchDoc({ effects: doc.effects.filter((item) => item !== effect) })}>×</button></span>)}
+          </div>}
         </aside>
 
         <section className="editor-panel">
@@ -527,8 +560,17 @@ export default function Home() {
           </div>}
 
           {view === "metadata" && <div className="metadata-view">
-            {[ ["@метр", meta.meter], ["@клаузула", meta.clausula], ["@рифма", meta.rhyme], ["@доп", meta.effects.join(", ")], ["@формула", meta.formula], ["@стопность", meta.stopness], ["@стихов", String(doc.lines.length)] ].map(([name, value]) => <div className="meta-row" key={name}><code>{name}</code><span>{value || <em>пусто</em>}</span></div>)}
-            <p className="metadata-note">Поля пересчитываются после каждого изменения строк. Редкие формулы и сложные композиции требуют ручной проверки.</p>
+            {([ ["meter", "@метр"], ["formula", "@формула"], ["stopness", "@стопность"] ] as const).map(([key, name]) => <div className="meta-editor" key={key}>
+              <label><code>{name}</code><input value={meta[key]} onChange={(event) => patchMetadata(key, event.target.value)} /></label>
+              <small>Автоматическое предложение: <strong>{automaticMetadata[key] || "пусто"}</strong></small>
+              <div><button className="button secondary" onClick={() => patchMetadata(key, automaticMetadata[key])}>Использовать автоматическое значение</button>
+                {doc.metadata[key].original !== undefined && <button className="button secondary" onClick={() => updateDoc((current) => ({ ...current, metadata: restoreOriginalValue(current.metadata, key) }))}>Вернуть исходное значение</button>}</div>
+            </div>)}
+            <div className="meta-editor"><label><code>@доп</code><input value={doc.effects.join(", ")} onChange={(event) => patchDoc({ effects: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} /></label></div>
+            <div className="meta-editor"><label><code>@строфика</code><input value={doc.strophe} onChange={(event) => patchDoc({ strophe: event.target.value })} /></label></div>
+            <div className="meta-editor"><label><code>@гр_строфика</code><input value={doc.graphicStrophe} onChange={(event) => patchDoc({ graphicStrophe: event.target.value })} /></label></div>
+            {[ ["@клаузула", meta.clausula], ["@рифма", meta.rhyme], ["@стихов", String(doc.lines.length)] ].map(([name, value]) => <div className="meta-row" key={name}><code>{name}</code><span>{value || <em>пусто</em>}</span></div>)}
+            <p className="metadata-note">Исходная разметка сохраняется до явной ручной правки. Автоматические значения — только предложения.</p>
           </div>}
 
           {view === "source" && <div className="source-view"><textarea value={exported} readOnly spellCheck={false} /><button className="copy-button" onClick={async () => { await navigator.clipboard.writeText(exported); setCopied(true); window.setTimeout(() => setCopied(false), 1400); }}>{copied ? "Скопировано" : "Копировать код"}</button></div>}
