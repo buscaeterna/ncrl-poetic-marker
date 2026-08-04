@@ -1,6 +1,8 @@
 "use client";
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { exportCorpus, exportPoem, importCorpusBytes, type ImportedCorpus, type ImportedPoem, type ProcessingStatus } from "./corpus";
+import { loadWorkspace, saveWorkspace } from "./corpus-db";
 
 type Clause = "м" | "ж" | "д" | "г";
 type Meter = "" | "Я" | "Х" | "Д" | "Ан" | "Аф" | "Дк" | "Тк" | "Ак" | "О";
@@ -81,17 +83,6 @@ const sample: DocumentState = {
   })),
 };
 
-function stripHtml(value: string) {
-  return value
-    .replace(/<br\s*\/?\s*>/gi, "\n")
-    .replace(/<\/p>/gi, "\n\n")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&");
-}
-
 function escapeHtml(value: string) {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -137,46 +128,6 @@ function suggestMeter(text: string): { meter: Meter; feet: number; scheme: strin
     scheme: Array.from({ length: feet }, () => String(best.step - 1)).join("*"),
     note: bestScore ? "Предварительная схема: проверьте иктусы" : "Схема совпадает с отмеченными ударениями",
   };
-}
-
-function parseInput(source: string): Partial<DocumentState> & { lines: VerseLine[] } {
-  const author = source.match(/<meta\s+name=['"]author['"]\s+content=['"]([^'"]*)/i)?.[1] ?? "";
-  const title = source.match(/<meta\s+name=['"]title['"]\s+content=['"]([^'"]*)/i)?.[1] ?? "";
-  const date = source.match(/<meta\s+name=['"]date['"]\s+content=['"]([^'"]*)/i)?.[1] ?? "????";
-  const annotated = [...source.matchAll(/<#([А-Яа-я]+)(\*)?(\d+)([мждг])(?:\s+([0-9*|]+))?>(.*?)(?=<br\s*\/?\s*>|<\/p>)/gis)];
-  if (annotated.length) {
-    const lines = annotated.map((match, index) => ({
-      id: uid(),
-      meter: match[1] as Meter,
-      starred: Boolean(match[2]),
-      feet: Number(match[3]),
-      clause: match[4] as Clause,
-      scheme: match[5] ?? "",
-      text: stripHtml(match[6]).trim(),
-      breakBefore: index > 0 && /<\/p>\s*\n*\s*<p[^>]*class=verse/i.test(source.slice(annotated[index - 1].index! + annotated[index - 1][0].length, match.index!)),
-      note: "Импортировано из строки",
-    }));
-    const field = (name: string) => source.match(new RegExp(`^@${name}(?: (.*))?$`, "mi"))?.[1] ?? "";
-    const meterField = field("метр");
-    const mode = meterField.startsWith("гетерометрия") ? "heterometry" : meterField.startsWith("полиметрия") ? "polymetry" : /\| Вл/.test(meterField) ? "free" : "auto";
-    return {
-      author, title, date, lines, mode,
-      cycle: field("цикл"), strophe: field("строфика") || "0", graphicStrophe: field("гр_строфика"),
-      rhyme: field("рифма").split(" | ")[0] || "0", rhymeScheme: field("рифма").split(" | ")[1] || "",
-      effects: field("доп").split(",").map((x) => x.trim()).filter(Boolean),
-    };
-  }
-  const plain = stripHtml(source).replace(/<<<---.*?>>>/g, "").trim();
-  let hadBlank = false;
-  const lines: VerseLine[] = [];
-  for (const raw of plain.split(/\r?\n/)) {
-    const text = raw.trim();
-    if (!text) { hadBlank = lines.length > 0; continue; }
-    const suggestion = suggestMeter(text);
-    lines.push({ id: uid(), text, meter: suggestion.meter, feet: suggestion.feet, clause: "м", scheme: suggestion.scheme, breakBefore: hadBlank, starred: false, note: suggestion.note });
-    hadBlank = false;
-  }
-  return { author, title, date, lines };
 }
 
 function groupByParts(lines: VerseLine[]) {
@@ -311,6 +262,16 @@ function buildExport(doc: DocumentState, meta: ReturnType<typeof deriveMetadata>
   return [...head, ...body, "", "</body>", "</html>"].join("\n");
 }
 
+function poemToDocument(poem: ImportedPoem): DocumentState {
+  return {
+    author: poem.author, title: poem.title, date: poem.date, cycle: poem.cycle,
+    strophe: poem.fields["строфика"] || "0", graphicStrophe: poem.fields["гр_строфика"] || "",
+    rhyme: poem.fields["рифма"]?.split(" | ")[0] || "0", rhymeScheme: poem.fields["рифма"]?.split(" | ")[1] || "",
+    mode: "auto", effects: poem.fields["доп"]?.split(",").map((value) => value.trim()).filter(Boolean) || [],
+    lines: poem.lines as VerseLine[],
+  };
+}
+
 function Icon({ children }: { children: React.ReactNode }) {
   return <span className="icon" aria-hidden="true">{children}</span>;
 }
@@ -321,6 +282,11 @@ export default function Home() {
   const [view, setView] = useState<"editor" | "metadata" | "source">("editor");
   const [saved, setSaved] = useState(true);
   const [copied, setCopied] = useState(false);
+  const [corpora, setCorpora] = useState<ImportedCorpus[]>([]);
+  const [poems, setPoems] = useState<ImportedPoem[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [queue, setQueue] = useState<string[]>([]);
+  const [workspaceReady, setWorkspaceReady] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const meta = useMemo(() => deriveMetadata(doc), [doc]);
   const issues = useMemo(() => validate(doc, meta), [doc, meta]);
@@ -329,25 +295,45 @@ export default function Home() {
   const warningCount = issues.filter((issue) => issue.level === "warning").length;
 
   useEffect(() => {
-    const cached = localStorage.getItem("nkrya-poetry-draft");
-    if (cached) {
-      window.setTimeout(() => {
-        try { setDoc(JSON.parse(cached)); } catch { /* ignore invalid old draft */ }
-      }, 0);
-    }
+    loadWorkspace().then((workspace) => {
+      if (workspace) {
+        setCorpora(workspace.corpora); setPoems(workspace.poems); setActiveId(workspace.activeId); setQueue(workspace.queue);
+        const active = workspace.poems.find((poem) => poem.id === workspace.activeId);
+        if (active) setDoc(poemToDocument(active));
+      } else {
+        const cached = localStorage.getItem("nkrya-poetry-draft");
+        if (cached) try { setDoc(JSON.parse(cached)); } catch { /* compatibility with a malformed legacy draft */ }
+      }
+    }).finally(() => setWorkspaceReady(true));
   }, []);
 
   useEffect(() => {
+    if (!workspaceReady) return;
     const timer = window.setTimeout(() => {
-      localStorage.setItem("nkrya-poetry-draft", JSON.stringify(doc));
-      setSaved(true);
+      saveWorkspace({ corpora, poems, activeId, queue }).then(() => {
+        setSaved(true);
+        setPoems((items) => items.some((poem) => poem.dirty) ? items.map((poem) => ({ ...poem, dirty: false })) : items);
+      });
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [doc]);
+  }, [corpora, poems, activeId, queue, workspaceReady]);
+
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => { if (!saved || poems.some((poem) => poem.dirty)) event.preventDefault(); };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [saved, poems]);
 
   const updateDoc = (updater: DocumentState | ((current: DocumentState) => DocumentState)) => {
     setSaved(false);
-    setDoc(updater);
+    setDoc((current) => {
+      const next = typeof updater === "function" ? updater(current) : updater;
+      if (activeId) setPoems((items) => items.map((poem) => poem.id === activeId ? {
+        ...poem, author: next.author, title: next.title, date: next.date, cycle: next.cycle,
+        lines: next.lines, dirty: true, fields: { ...poem.fields, "строфика": next.strophe, "гр_строфика": next.graphicStrophe },
+      } : poem));
+      return next;
+    });
   };
   const patchDoc = (value: Partial<DocumentState>) => updateDoc((current) => ({ ...current, ...value }));
   const patchLine = (index: number, value: Partial<VerseLine>) => updateDoc((current) => ({
@@ -363,21 +349,44 @@ export default function Home() {
     }),
   }));
 
-  const importText = (source: string) => {
-    const parsed = parseInput(source);
-    updateDoc((current) => ({ ...current, ...parsed, lines: parsed.lines }));
-    setSelected(0);
-  };
+
 
   const onFile = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    importText(await file.text());
+    const files = [...(event.target.files ?? [])];
+    if (!files.length) return;
+    const imported = await Promise.all(files.map(async (file, order) => importCorpusBytes(await file.arrayBuffer(), file.name, corpora.length + order)));
+    const newCorpora = imported.map((item) => item.corpus);
+    const newPoems = imported.flatMap((item) => item.documents);
+    setCorpora((items) => [...items, ...newCorpora]);
+    setPoems((items) => [...items, ...newPoems]);
+    setQueue((items) => [...items, ...newPoems.map((poem) => poem.id)]);
+    if (newPoems[0]) { setActiveId(newPoems[0].id); setDoc(poemToDocument(newPoems[0])); setSelected(0); }
+    setSaved(false);
     event.target.value = "";
   };
 
+  const selectPoem = (poem: ImportedPoem) => { setActiveId(poem.id); setDoc(poemToDocument(poem)); setSelected(0); };
+  const deletePoem = (poemId: string) => {
+    const remaining = poems.filter((poem) => poem.id !== poemId);
+    setPoems(remaining); setQueue((items) => items.filter((id) => id !== poemId));
+    if (activeId === poemId) { const next = remaining[0]; setActiveId(next?.id ?? null); if (next) setDoc(poemToDocument(next)); }
+    setSaved(false);
+  };
+  const clearCorpus = () => { setCorpora([]); setPoems([]); setQueue([]); setActiveId(null); setSaved(false); };
+  const setStatus = (status: ProcessingStatus) => {
+    if (!activeId) return;
+    setPoems((items) => items.map((poem) => poem.id === activeId ? { ...poem, status, dirty: true } : poem)); setSaved(false);
+  };
+  const downloadCorpora = () => corpora.forEach((corpus, index) => window.setTimeout(() => {
+    const blob = new Blob([exportCorpus(corpus, poems)], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob); const anchor = document.createElement("a");
+    anchor.href = url; anchor.download = `${corpus.name.replace(/\.(txt|html?)$/i, "")}-export.txt`; anchor.click(); URL.revokeObjectURL(url);
+  }, index * 150));
+
   const download = () => {
-    const blob = new Blob([exported], { type: "text/html;charset=utf-8" });
+    const activePoem = poems.find((poem) => poem.id === activeId);
+    const content = activePoem ? exportPoem({ ...activePoem, author: doc.author, title: doc.title, date: doc.date, cycle: doc.cycle }, doc.lines) : exported;
+    const blob = new Blob([content], { type: "text/html;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
@@ -397,11 +406,26 @@ export default function Home() {
         </div>
         <div className="top-actions">
           <span className={`save-state ${saved ? "is-saved" : ""}`}><i />{saved ? "Черновик сохранён" : "Сохранение…"}</span>
-          <input ref={fileRef} type="file" accept=".txt,.htm,.html,text/plain,text/html" hidden onChange={onFile} />
+          <input ref={fileRef} type="file" multiple accept=".txt,.htm,.html,text/plain,text/html" hidden onChange={onFile} />
           <button className="button secondary" onClick={() => fileRef.current?.click()}><Icon>↥</Icon>Импорт</button>
           <button className="button primary" onClick={download}><Icon>↓</Icon>Скачать HTML</button>
         </div>
       </header>
+
+      <section className="corpus-panel" aria-label="Импортированный корпус">
+        <div className="corpus-summary">
+          <strong>Корпусная очередь</strong><span>{corpora.length} корп. · {poems.length} произв.</span>
+          <button className="button secondary" disabled={!corpora.length} onClick={downloadCorpora}>Скачать корпуса</button>
+          <button className="delete" disabled={!poems.length} onClick={clearCorpus}>Очистить очередь</button>
+        </div>
+        {poems.length > 0 && <div className="poem-queue">{poems.map((poem) => <article key={poem.id} className={poem.id === activeId ? "active" : ""}>
+          <button className="poem-select" onClick={() => selectPoem(poem)}><strong>{poem.title || "Без названия"}</strong><span>{poem.author || "Автор не указан"}</span><small>{corpora.find((corpus) => corpus.id === poem.corpusId)?.name} · {poem.sourceName}</small></button>
+          <button className="queue-delete" aria-label={`Удалить ${poem.title}`} onClick={() => deletePoem(poem.id)}>×</button>
+        </article>)}</div>}
+        {activeId && <label className="status-control">Статус <select value={poems.find((poem) => poem.id === activeId)?.status ?? "unprocessed"} onChange={(event) => setStatus(event.target.value as ProcessingStatus)}>
+          <option value="unprocessed">не обработано</option><option value="processing">обрабатывается</option><option value="ready">готово</option><option value="review">нужна проверка</option><option value="error">ошибка</option>
+        </select></label>}
+      </section>
 
       <section className="workspace">
         <aside className="sidebar left-panel">
