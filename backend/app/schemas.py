@@ -14,8 +14,8 @@ class HealthResponse(BaseModel):
 class CapabilitiesResponse(BaseModel):
     workspace: bool = True
     jobs: bool = True
-    pdf: bool = False
-    ocr: bool = False
+    pdf: bool = True
+    ocr: bool = True
     stress: bool = False
     meter: bool = False
     local_model: bool = False
@@ -57,7 +57,7 @@ class ProjectDetail(ProjectSummary):
 
 
 class JobCreate(BaseModel):
-    type: Literal["workspace_summary"]
+    type: Literal["workspace_summary", "pdf_extract"]
 
 
 class JobResponse(BaseModel):
@@ -74,6 +74,12 @@ class JobResponse(BaseModel):
     started_at: datetime | None
     finished_at: datetime | None
     updated_at: datetime
+
+class SourcePageUpdate(BaseModel):
+    edited_text: str | None = None
+    review_status: Literal["pending", "approved", "excluded"] | None = None
+    method: Literal["embedded_text", "ocr"] | None = None
+    revision: int = Field(ge=1)
 
 
 class ErrorResponse(BaseModel):

@@ -4,10 +4,12 @@ import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { decodeCorpus, encodeCorpus, exportCorpusBytes, exportPoem, importCorpusBytes, splitCorpus, type ImportedCorpus, type ImportedPoem, type ProcessingStatus } from "./corpus";
 import { loadWorkspace, saveWorkspace } from "./corpus-db";
 import { RawImportDialog } from "./raw-import-dialog";
+import { PdfImportDialog } from "./pdf-import-dialog";
+import { persistPdfProjectImport } from "./pdf-project-import";
 import { createRawTextImport, finalizeRawTextImport, type RawTextImportDraft } from "./raw-text";
 import { ruleById, validateAnnotation } from "./annotation-rules";
 import { RuntimeIndicator } from "./runtime-indicator";
-import { ProjectsDialog } from "./projects-dialog";
+import { ProjectsDialog, type ServerProject } from "./projects-dialog";
 import { effectiveMetadata, metadataFromFields, restoreOriginalValue, setManualValue, type AutomaticMetadata, type DocumentMode, type EditorMetadata, type MetadataKey } from "./editor-metadata";
 
 type Clause = "м" | "ж" | "д" | "г";
@@ -61,6 +63,11 @@ const ST_ORDER: Meter[] = ["Ан", "Аф", "Д", "Х", "Я"];
 const ALL_ORDER: Meter[] = ["Ан", "Аф", "Д", "Х", "Я", "О", "Дк", "Тк", "Ак"];
 
 const uid = () => Math.random().toString(36).slice(2, 10);
+export const formatPageRanges = (pages:number[]) => {
+  const sorted=[...new Set(pages)].sort((a,b)=>a-b), ranges:string[]=[];
+  for(let index=0;index<sorted.length;){let end=index;while(end+1<sorted.length&&sorted[end+1]===sorted[end]+1)end++;ranges.push(end===index?String(sorted[index]):`${sorted[index]}-${sorted[end]}`);index=end+1}
+  return ranges.join(",");
+};
 
 const sample: DocumentState = {
   author: "А. Горенко",
@@ -295,8 +302,11 @@ export default function Home() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [queue, setQueue] = useState<string[]>([]);
   const [pendingRawImport, setPendingRawImport] = useState<RawTextImportDraft[] | null>(null);
+  const [pendingPdfSource, setPendingPdfSource] = useState<{id:string;name:string;pages:number[];usedOcr:boolean}|null>(null);
   const [workspaceReady, setWorkspaceReady] = useState(false);
   const [projectsOpen, setProjectsOpen] = useState(false);
+  const [serverProject, setServerProject] = useState<ServerProject | null>(null);
+  const [pdfOpen, setPdfOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const meta = useMemo(() => deriveMetadata(doc), [doc]);
   const issues = useMemo(() => validate(doc, meta), [doc, meta]);
@@ -412,16 +422,32 @@ export default function Home() {
     }
   };
 
-  const confirmRawImport = (drafts: RawTextImportDraft[]) => {
+  const persistImportedWorkspace = async (newCorpora: ImportedCorpus[], newPoems: ImportedPoem[]) => {
+    if (!serverProject) throw new Error("Серверный проект не открыт");
+    const sourceDocumentId=newPoems[0]?.provenance?.sourceDocumentId;
+    if(!sourceDocumentId)throw new Error("PDF provenance отсутствует");
+    const result=await persistPdfProjectImport({project:serverProject,baseWorkspace:{corpora,poems,activeId,queue},corpora:newCorpora,poems:newPoems,sourceDocumentId});
+    const workspace=result.workspace;
+    setServerProject(result.project as ServerProject); setCorpora(workspace.corpora);setPoems(workspace.poems);setQueue(workspace.queue);
+    const savedPoem=workspace.poems.find(poem=>poem.id===result.activePoemId);
+    if(!savedPoem)throw new Error("Сохранённое произведение отсутствует в workspace проекта");
+    setActiveId(savedPoem.id);setDoc(poemToDocument(savedPoem));setSelected(0);
+  };
+
+  const confirmRawImport = async (drafts: RawTextImportDraft[]) => {
     const imported = drafts.map(finalizeRawTextImport);
     const newCorpora = imported.map((item) => item.corpus);
-    const newPoems = imported.flatMap((item) => item.documents);
-    setCorpora((items) => [...items, ...newCorpora]);
-    setPoems((items) => [...items, ...newPoems]);
-    setQueue((items) => [...items, ...newPoems.map((poem) => poem.id)]);
-    if (newPoems[0]) { setActiveId(newPoems[0].id); setDoc(poemToDocument(newPoems[0])); setSelected(0); }
-    setPendingRawImport(null);
-    setSaved(false);
+    const confirmedAt=new Date().toISOString();
+    const newPoems = imported.flatMap((item) => item.documents).map(poem=>pendingPdfSource?{...poem,provenance:{sourceDocumentId:pendingPdfSource.id,sourcePdfName:pendingPdfSource.name,pageRange:formatPageRanges(pendingPdfSource.pages),usedOcr:pendingPdfSource.usedOcr,confirmedAt}}:poem);
+    try {
+      if(pendingPdfSource) await persistImportedWorkspace(newCorpora,newPoems);
+      else {
+        setCorpora(items=>[...items,...newCorpora]);setPoems(items=>[...items,...newPoems]);setQueue(items=>[...items,...newPoems.map(poem=>poem.id)]);
+        if(newPoems[0]){setActiveId(newPoems[0].id);setDoc(poemToDocument(newPoems[0]));setSelected(0)}
+      }
+      setPendingRawImport(null);setPendingPdfSource(null);setSaved(false);
+    }
+    catch(error){window.alert(error instanceof Error?error.message:"Не удалось сохранить PDF-импорт");}
   };
 
   const selectPoem = (poem: ImportedPoem) => { setActiveId(poem.id); setDoc(poemToDocument(poem)); setSelected(0); };
@@ -464,7 +490,7 @@ export default function Home() {
 
   return (
     <main className="app-shell">
-      {projectsOpen && <ProjectsDialog workspace={{corpora, poems, activeId, queue}} onClose={() => setProjectsOpen(false)} onLoad={(workspace) => { setCorpora(workspace.corpora); setPoems(workspace.poems); setActiveId(workspace.activeId); setQueue(workspace.queue); const active=workspace.poems.find(p=>p.id===workspace.activeId); if(active)setDoc(poemToDocument(active)); saveWorkspace(workspace); }} />}
+      {projectsOpen && <ProjectsDialog workspace={{corpora, poems, activeId, queue}} onProject={setServerProject} onClose={() => setProjectsOpen(false)} onLoad={(workspace) => { setCorpora(workspace.corpora); setPoems(workspace.poems); setActiveId(workspace.activeId); setQueue(workspace.queue); const active=workspace.poems.find(p=>p.id===workspace.activeId); if(active)setDoc(poemToDocument(active)); saveWorkspace(workspace); }} />}
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark">СТ</span>
@@ -476,6 +502,7 @@ export default function Home() {
           <span className={`save-state ${saved ? "is-saved" : ""}`}><i />{saved ? "Черновик сохранён" : "Сохранение…"}</span>
           <input ref={fileRef} type="file" multiple accept=".txt,.htm,.html,text/plain,text/html" hidden onChange={onFile} />
           <button className="button secondary" onClick={() => fileRef.current?.click()}><Icon>↥</Icon>Импорт</button>
+          {process.env.NEXT_PUBLIC_RUNTIME_MODE !== "static" && <button className="button secondary" onClick={() => setPdfOpen(true)}>Импорт PDF</button>}
           <button className="button primary" onClick={download}><Icon>↓</Icon>Скачать HTML</button>
         </div>
       </header>
@@ -602,7 +629,19 @@ export default function Home() {
           <div className="rule-card"><span>Приоритет разбора</span><strong>Силлабо-тоника → Дк → Тк → Ак → Вл</strong><p>Выбирайте наиболее строгую схему, которую допускают ударения и контекст стихотворения.</p></div>
         </aside>
       </section>
-      {pendingRawImport && <RawImportDialog drafts={pendingRawImport} onCancel={() => setPendingRawImport(null)} onConfirm={confirmRawImport} />}
+      {pendingRawImport && <RawImportDialog drafts={pendingRawImport} onCancel={() => { setPendingRawImport(null); setPendingPdfSource(null); }} onConfirm={confirmRawImport} />}
+      {pdfOpen && <PdfImportDialog project={serverProject} onClose={() => setPdfOpen(false)} onReviewed={async (source,text) => {
+        const included=source.pages?.filter(page=>page.review_status==="approved")??[];
+        const context={id:source.id,name:source.original_name,pages:included.map(page=>page.page_number),usedOcr:included.some(page=>page.method==="ocr")};
+        const bytes=new TextEncoder().encode(text);
+        if(splitCorpus(text).length){
+          const item=importCorpusBytes(bytes,source.original_name,corpora.length), confirmedAt=new Date().toISOString();
+          const documents=item.documents.map(poem=>({...poem,status:"review" as const,provenance:{sourceDocumentId:context.id,sourcePdfName:context.name,pageRange:formatPageRanges(context.pages),usedOcr:context.usedOcr,confirmedAt}}));
+          await persistImportedWorkspace([item.corpus],documents);setPdfOpen(false);
+        } else {
+          setPendingPdfSource(context);setPendingRawImport([createRawTextImport(bytes,source.original_name,corpora.length)]);setPdfOpen(false);
+        }
+      }} />}
     </main>
   );
 }
