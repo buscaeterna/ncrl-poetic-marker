@@ -16,6 +16,7 @@ from .pdf import inspect_pdf, safe_path
 from .schemas import (CapabilitiesResponse, ErrorEnvelope, HealthResponse, JobCreate,
                       JobResponse, ProjectCreate, ProjectDetail, ProjectSummary, ProjectUpdate)
 from .schemas import SourcePageUpdate
+from .schemas import StressJobCreate
 from .settings import settings
 
 app = FastAPI(title="NCRL Poetic Marker API", version=settings.version, docs_url="/api/docs", openapi_url="/api/openapi.json")
@@ -261,3 +262,24 @@ def cancel_job(job_id: UUID, db: Session = Depends(database)):
     job.status, job.finished_at = JobStatus.cancelled, utcnow()
     db.commit(); db.refresh(job)
     return job
+
+@app.get("/api/v1/stress/models", tags=["stress"])
+def stress_models():
+    # The compact fallback contains no downloadable weights. Production neural
+    # providers are exposed here only after their pinned manifest is installed.
+    return [{"id":"ncrl-test-dictionary","version":"1","state":"installed",
+             "size":0,"provider":"deterministic","offline":True}]
+
+@app.post("/api/v1/projects/{project_id}/stress/jobs", status_code=202, tags=["stress"])
+def create_stress_job(project_id: UUID, body: StressJobCreate, db: Session = Depends(database)):
+    project=db.get(Project,project_id)
+    if not project: raise missing()
+    if project.revision != body.revision:
+        raise HTTPException(409,detail={"code":"revision_conflict","message":"Project has a newer revision","current_revision":project.revision})
+    known={str(p.get("id")) for p in project.workspace.get("poems",[])}
+    if len(set(body.poem_ids)) != len(body.poem_ids) or any(i not in known for i in body.poem_ids):
+        raise HTTPException(422,detail={"code":"invalid_poem_selection","message":"Poem ids must be unique and belong to this project"})
+    job=Job(project_id=project_id,type="stress_analysis",result={"poem_ids":body.poem_ids,
+      "workspace_revision":body.revision,"model_version":body.model_version,"processed_poems":0,
+      "processed_lines":0,"uncertain_words":0})
+    db.add(job);db.commit();db.refresh(job);return job

@@ -11,7 +11,38 @@ export type CorpusLine = {
   breakBefore: boolean;
   starred: boolean;
   note: string;
+  /** A machine result is review data only; exporters continue to use `text`. */
+  stressSuggestion?: StressSuggestion;
 };
+
+export type StressWord = {
+  original: string; normalized: string; position: number | null; confidence: number;
+  alternatives: number[]; ambiguous: boolean;
+  source: "model" | "dictionary" | "rule" | "ё" | "existing";
+  warning?: string;
+};
+
+export type StressSuggestion = {
+  sourceText: string; suggestedText: string; sourceHash: string;
+  state: "pending" | "accepted" | "rejected" | "stale";
+  confidence: number; uncertainWords: StressWord[]; words: StressWord[];
+  engine: string; engineVersion: string; analysedAt: string;
+};
+
+export function effectiveLineText(line: CorpusLine) { return line.text; }
+
+/** Accept only a result made for the current text. Existing/imported accents win. */
+export function acceptStressSuggestion(line: CorpusLine): CorpusLine {
+  const suggestion = line.stressSuggestion;
+  if (!suggestion || suggestion.state === "stale" || suggestion.sourceText !== line.text) return line;
+  return { ...line, text: suggestion.suggestedText, stressSuggestion: { ...suggestion, state: "accepted" } };
+}
+
+export function editLineText(line: CorpusLine, text: string): CorpusLine {
+  const suggestion = line.stressSuggestion;
+  return { ...line, text, stressSuggestion: suggestion && suggestion.sourceText !== text
+    ? { ...suggestion, state: "stale" } : suggestion };
+}
 
 export type StructuralElement = {
   kind: "H1" | "H2" | "H3" | "date" | "epigraf" | "verse";
