@@ -5,6 +5,7 @@ import { decodeCorpus, encodeCorpus, exportCorpusBytes, exportPoem, importCorpus
 import { loadWorkspace, saveWorkspace } from "./corpus-db";
 import { RawImportDialog } from "./raw-import-dialog";
 import { createRawTextImport, finalizeRawTextImport, type RawTextImportDraft } from "./raw-text";
+import { ruleById, validateAnnotation } from "./annotation-rules";
 
 type Clause = "м" | "ж" | "д" | "г";
 type Meter = "" | "Я" | "Х" | "Д" | "Ан" | "Аф" | "Дк" | "Тк" | "Ак" | "О";
@@ -35,7 +36,7 @@ type DocumentState = {
   lines: VerseLine[];
 };
 
-type Issue = { level: "error" | "warning" | "info"; title: string; detail: string; line?: number };
+type Issue = { level: "error" | "warning" | "info"; title: string; detail: string; line?: number; ruleId?: string };
 
 const VOWELS = "аеёиоуыэюяАЕЁИОУЫЭЮЯ";
 const METERS: Meter[] = ["", "Я", "Х", "Д", "Аф", "Ан", "Дк", "Тк", "Ак", "О"];
@@ -229,18 +230,12 @@ function validate(doc: DocumentState, meta: ReturnType<typeof deriveMetadata>): 
     if (!line.meter) issues.push({ level: "error", title: "Не указан метр строки", detail: "Выберите метр после проверки словесных ударений.", line: index + 1 });
     if (!line.feet) issues.push({ level: "error", title: "Не указана стопность", detail: "Стопность обязательна для каждой строки.", line: index + 1 });
     if (!line.text.includes("`")) issues.push({ level: "warning", title: "Нет знаков ударения", detail: "Проверьте все словоформы и отметьте ударные гласные.", line: index + 1 });
-    if (line.meter === "Ак") issues.push({ level: "warning", title: "Строка Ак требует пересмотра", detail: "Проверьте, можно ли восстановить икт и представить строку как Дк или Тк.", line: index + 1 });
     if (line.meter === "О" && countSyllables(line.text) > 1) issues.push({ level: "error", title: "Сомнительный односложный метр", detail: "О применяется к действительно односложной строке; проверьте Я1 или Х1.", line: index + 1 });
   });
-  if (!meta.stopness) issues.push({ level: "error", title: "Пустая графа стопности", detail: "@стопность нужно заполнять всегда." });
-  if (meta.formula.includes("Тк") && !meta.meter.includes("Тк")) issues.push({ level: "error", title: "Тк отсутствует в @метр", detail: "Если Тк присутствует в строках или формуле, укажите его в графе метра." });
-  if (doc.mode === "free" && doc.rhyme !== "0") issues.push({ level: "error", title: "Вл должен быть нерифмованным", detail: "По инструкции Вл — свободный нерифмованный тонический стих." });
-  if (doc.mode === "free" && doc.effects.includes("нарушения строфики")) issues.push({ level: "error", title: "У Вл нет нарушений строфики", detail: "Регулярная строфика отсутствует, поэтому нарушать её невозможно." });
-  if (doc.mode === "heterometry" && doc.effects.some((x) => x.includes("анакрус"))) issues.push({ level: "error", title: "Лишняя помета анакрусы", detail: "При гетерометрии переменная анакруса уже включена в термин." });
-  if (doc.strophe === "0" && doc.graphicStrophe === "0") issues.push({ level: "error", title: "Дублирование нулевой строфики", detail: "При @строфика 0 пустую @гр_строфика оставляют без значения, если пробельных делений нет." });
-  if (doc.strophe !== "0" && !doc.graphicStrophe) issues.push({ level: "warning", title: "Не описана графическая строфика", detail: "Если пробельных строк нет, укажите @гр_строфика 0." });
   if (doc.mode === "polymetry" && groupByParts(doc.lines).length < 2) issues.push({ level: "error", title: "Нет частей полиметрии", detail: "Отметьте начало второй метрически самостоятельной части." });
-  if (meta.formula.includes("~") && !doc.effects.some((x) => x.startsWith("цезурные"))) issues.push({ level: "error", title: "Не указан цезурный эффект", detail: "Цезурный эффект должен быть отражён в @формула и @доп." });
+  issues.push(...validateAnnotation({ meter: meta.meter, formula: meta.formula, stopness: meta.stopness, effects: doc.effects,
+    strophe: doc.strophe, graphicStrophe: doc.graphicStrophe, hasGraphicBreaks: doc.lines.some((line) => line.breakBefore), lines: doc.lines
+  }));
   if (!issues.length) issues.push({ level: "info", title: "Формальных ошибок нет", detail: "Метрические решения и словесные ударения всё равно требуют экспертной проверки." });
   return issues;
 }
@@ -553,7 +548,7 @@ export default function Home() {
           <div className="issues">
             {issues.map((issue, index) => <button key={`${issue.title}-${index}`} className={`issue ${issue.level}`} onClick={() => { if (issue.line) { setSelected(issue.line - 1); setView("editor"); } }}>
               <span className="issue-mark">{issue.level === "error" ? "!" : issue.level === "warning" ? "?" : "✓"}</span>
-              <span><strong>{issue.title}{issue.line ? ` · строка ${issue.line}` : ""}</strong><small>{issue.detail}</small></span>
+              <span><strong>{issue.title}{issue.line ? ` · строка ${issue.line}` : ""}</strong><small>{issue.detail}</small>{issue.ruleId && <details onClick={(event) => event.stopPropagation()}><summary>Описание правила</summary><small>{ruleById.get(issue.ruleId)?.description}</small></details>}</span>
             </button>)}
           </div>
           <div className="rule-card"><span>Приоритет разбора</span><strong>Силлабо-тоника → Дк → Тк → Ак → Вл</strong><p>Выбирайте наиболее строгую схему, которую допускают ударения и контекст стихотворения.</p></div>
