@@ -1,6 +1,30 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {readFile} from 'node:fs/promises';
-const source=await readFile(new URL('../app/pdf-import-dialog.tsx',import.meta.url),'utf8');
-test('PDF dialog restores sources and keeps selection order',()=>{assert.match(source,/projects\/\$\{project\.id\}\/sources/);assert.match(source,/const order=docs\.length\+next\+\+/);assert.doesNotMatch(source,/localeCompare/)});
-test('PDF review is page-at-a-time with complete actions',()=>{assert.match(source,/current=active\?\.pages\?\.find/);for(const label of ['Повторить OCR','Встроенный текст','Сохранить и подтвердить','Исключить','Оригинал','TXT','JSON','Удалить'])assert.ok(source.includes(label),label)});
-test('cancellation targets the selected document job and progress is real',()=>{assert.match(source,/const job=active\.job/);assert.match(source,/d\.job\?\.progress/);assert.doesNotMatch(source,/jobs\.find/)});
-test('OCR retry is queued and separately cancellable',()=>{assert.match(source,/setOcrJob/);assert.match(source,/jobs\/\$\{ocrJob\.id\}\/cancel/)});
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {canImportPdf,clearCancelledPdfImport,jobMatchesPage,planPdfBatch,projectSaveOutcome} from '../app/pdf-import-state.ts';
+
+test('batch order starts after the highest surviving upload order',()=>{
+  const files=['slow.pdf','fast.pdf'];
+  const plan=planPdfBatch([{upload_order:2},{upload_order:8}],files);
+  assert.deepEqual(plan,[{file:'slow.pdf',uploadOrder:9},{file:'fast.pdf',uploadOrder:10}]);
+  assert.deepEqual(plan.map(item=>item.file),files,'response timing cannot reorder the assigned order');
+});
+test('OCR state only belongs to its originating document and page',()=>{
+  const job={id:'j',status:'running',progress:.5,error:null,documentId:'doc-a',pageNumber:3};
+  assert.equal(jobMatchesPage(job,'doc-a',3),true);
+  assert.equal(jobMatchesPage(job,'doc-a',4),false);
+  assert.equal(jobMatchesPage(job,'doc-b',3),false);
+});
+test('cancelling PDF raw review clears both pending values',()=>{
+  assert.deepEqual(clearCancelledPdfImport(),{pendingRawImport:null,pendingPdfSource:null});
+});
+test('prepared import survives 409 and commits on retry',()=>{
+  const prepared={text:'reviewed',provenance:{sourceDocumentId:'doc'}};
+  const conflict=projectSaveOutcome(prepared,409);
+  assert.equal(conflict.prepared,prepared);assert.equal(conflict.retryable,true);
+  const retry=projectSaveOutcome(conflict.prepared,200);
+  assert.equal(retry.committed,prepared);assert.equal(retry.prepared,null);
+});
+test('both review and immutable approved sources can be imported',()=>{
+  assert.equal(canImportPdf('review'),true);assert.equal(canImportPdf('approved'),true);
+  assert.equal(canImportPdf('extracting'),false);
+});

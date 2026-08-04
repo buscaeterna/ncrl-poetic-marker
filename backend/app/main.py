@@ -154,6 +154,9 @@ def start_extract(document_id: UUID, db: Session = Depends(database)):
 
 @app.patch("/api/v1/sources/{document_id}/pages/{page_number}", tags=["PDF sources"])
 def edit_page(document_id: UUID, page_number: int, body: SourcePageUpdate, db: Session = Depends(database)):
+    document = db.get(SourceDocument, document_id)
+    if not document: raise missing("document")
+    if document.status != "review": raise HTTPException(409, detail={"code":"document_state_conflict","message":"Pages can only be edited while the document is in review"})
     page = db.scalar(select(SourcePage).where(SourcePage.document_id == document_id, SourcePage.page_number == page_number))
     if not page: raise missing("page")
     if body.revision != page.revision: raise HTTPException(409, detail={"code": "revision_conflict", "message": "Page has a newer revision", "current_revision": page.revision})
@@ -205,6 +208,7 @@ def repeat_page_ocr(document_id: UUID, page_number: int, revision: int, db: Sess
     doc = db.get(SourceDocument, document_id)
     page = db.scalar(select(SourcePage).where(SourcePage.document_id == document_id, SourcePage.page_number == page_number))
     if not doc or not page: raise missing("page")
+    if doc.status != "review": raise HTTPException(409, detail={"code":"document_state_conflict","message":"OCR can only be repeated while the document is in review"})
     if page.revision != revision: raise HTTPException(409, detail={"code":"revision_conflict","message":"Page has a newer revision","current_revision":page.revision})
     active=db.scalar(select(Job).where(Job.type=="pdf_page_ocr",Job.status.in_([JobStatus.queued,JobStatus.running,JobStatus.cancel_requested]),Job.result["document_id"].as_string()==str(document_id),Job.result["page_number"].as_integer()==page_number))
     if active: raise HTTPException(409, detail={"code":"ocr_job_active","message":"OCR retry is already active for this page"})

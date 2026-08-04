@@ -57,3 +57,15 @@ def test_document_list_exposes_its_exact_job_and_progress():
         doc=SourceDocument(project_id=uuid.UUID(project["id"]),extraction_job_id=job.id,original_name="a.pdf",storage_key=f"{uuid.uuid4()}/a.pdf",mime_type="application/pdf",size=1,sha256="0"*64,upload_order=0,page_count=2,status="extracting");db.add(doc);db.flush();job_id=str(job.id)
     source=client.get(f"/api/v1/projects/{project['id']}/sources").json()[0]
     assert str(source["job"]["id"])==job_id and source["job"]["progress"]==.5
+
+def test_approved_document_is_immutable_but_remains_downloadable():
+    from app.database import SessionLocal
+    from app.models import Project, SourceDocument, SourcePage
+    import uuid
+    with SessionLocal.begin() as db:
+        project=Project(name="approved",schema_version=1,workspace=workspace());db.add(project);db.flush()
+        doc=SourceDocument(project_id=project.id,original_name="done.pdf",storage_key=f"{uuid.uuid4()}/done.pdf",mime_type="application/pdf",size=1,sha256="0"*64,upload_order=0,page_count=1,status="approved")
+        db.add(doc);db.flush();page=SourcePage(document_id=doc.id,page_number=1,method="ocr",raw_text="raw",edited_text="checked",ocr_text="raw",warnings=[],review_status="approved");db.add(page);db.flush();did,revision=doc.id,page.revision
+    assert client.patch(f"/api/v1/sources/{did}/pages/1",json={"revision":revision,"edited_text":"changed"}).status_code==409
+    assert client.post(f"/api/v1/sources/{did}/pages/1/ocr?revision={revision}").status_code==409
+    assert client.get(f"/api/v1/sources/{did}/text").text=="checked"

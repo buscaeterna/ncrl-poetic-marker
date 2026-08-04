@@ -626,7 +626,7 @@ export default function Home() {
           <div className="rule-card"><span>Приоритет разбора</span><strong>Силлабо-тоника → Дк → Тк → Ак → Вл</strong><p>Выбирайте наиболее строгую схему, которую допускают ударения и контекст стихотворения.</p></div>
         </aside>
       </section>
-      {pendingRawImport && <RawImportDialog drafts={pendingRawImport} onCancel={() => setPendingRawImport(null)} onConfirm={confirmRawImport} />}
+      {pendingRawImport && <RawImportDialog drafts={pendingRawImport} onCancel={() => { setPendingRawImport(null); setPendingPdfSource(null); }} onConfirm={confirmRawImport} />}
       {pdfOpen && <PdfImportDialog project={serverProject} onClose={() => setPdfOpen(false)} onReviewed={async (source,text) => {
         const included=source.pages?.filter(page=>page.review_status==="approved")??[];
         const context={id:source.id,name:source.original_name,pages:included.map(page=>page.page_number),usedOcr:included.some(page=>page.method==="ocr")};
