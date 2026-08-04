@@ -1,135 +1,53 @@
-# Р Р°Р·РјРµС‚С‡РёРє СЃС‚РёС…РѕРІ РќРљР РЇ
+# Разметчик стихов НКРЯ
 
-Р‘СЂР°СѓР·РµСЂРЅС‹Р№ СЂРµРґР°РєС‚РѕСЂ Рё РІР°Р»РёРґР°С‚РѕСЂ РјРµС‚СЂРёС‡РµСЃРєРѕР№ СЂР°Р·РјРµС‚РєРё РїРѕСЌС‚РёС‡РµСЃРєРёС… С‚РµРєСЃС‚РѕРІ.
-Р§РµСЂРЅРѕРІРёРєРё СЃРѕС…СЂР°РЅСЏСЋС‚СЃСЏ Р»РѕРєР°Р»СЊРЅРѕ РІ Р±СЂР°СѓР·РµСЂРµ; СЃРµСЂРІРµСЂ Рё СѓС‡С‘С‚РЅР°СЏ Р·Р°РїРёСЃСЊ РґР»СЏ СЂР°Р±РѕС‚С‹
-РЅРµ С‚СЂРµР±СѓСЋС‚СЃСЏ.
+Браузерный редактор и валидатор метрической разметки поэтических текстов. Сейчас приложение работает полностью на стороне браузера: поддерживает импорт и экспорт корпусов в UTF-8 и Windows-1251, очередь произведений, предварительное разделение сырого TXT и сохранение рабочего пространства в IndexedDB. Формат корпусов и пользовательский процесс остаются неизменными.
 
-## GitHub Pages
+## Два режима проекта
 
-РџРѕСЃР»Рµ СЃР»РёСЏРЅРёСЏ РєРѕРЅС„РёРіСѓСЂР°С†РёРё РїСѓР±Р»РёРєР°С†РёРё СЃР°Р№С‚ СЃРѕР±РёСЂР°РµС‚СЃСЏ РёР· РІРµС‚РєРё `main` Рё
-СЂР°Р·РІС‘СЂС‚С‹РІР°РµС‚СЃСЏ РїРѕ Р°РґСЂРµСЃСѓ:
+### GitHub Pages — текущий облегчённый режим
 
-<https://buscaeterna.github.io/ncrl-poetic-marker/>
+Статическая версия публикуется из `main` по адресу <https://buscaeterna.github.io/ncrl-poetic-marker/>. Ей не нужен сервер или учётная запись, а данные остаются в браузере. GitHub Pages не является полной серверной версией и не будет включать будущие фоновые вычисления и совместную работу.
 
-РџРµСЂРµРґ РїРµСЂРІС‹Рј Р·Р°РїСѓСЃРєРѕРј РѕС‚РєСЂРѕР№С‚Рµ `Settings в†’ Pages` Рё РІС‹Р±РµСЂРёС‚Рµ
-`Source в†’ GitHub Actions`. РџРѕСЃР»Рµ СЌС‚РѕРіРѕ workflow `Deploy to GitHub Pages`
-Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё Р·Р°РїСѓСЃРєР°РµС‚СЃСЏ РїСЂРё РєР°Р¶РґРѕРј push РІ `main`; РµРіРѕ С‚Р°РєР¶Рµ РјРѕР¶РЅРѕ Р·Р°РїСѓСЃС‚РёС‚СЊ
-РІСЂСѓС‡РЅСѓСЋ РЅР° РІРєР»Р°РґРєРµ `Actions`.
+Workflow [`.github/workflows/deploy-pages.yml`](.github/workflows/deploy-pages.yml) сохраняет отдельную статическую сборку.
 
-Р”Р»СЏ РїСЂРѕРІРµСЂРєРё СЃС‚Р°С‚РёС‡РµСЃРєРѕР№ СЃР±РѕСЂРєРё Р»РѕРєР°Р»СЊРЅРѕ:
+### Полная локальная/self-hosted-версия — будущий режим
 
-```bash
+Проект подготавливается к локальному развёртыванию на Windows, macOS и Linux и к self-hosted-установке. Серверные компоненты пока **не реализованы**: текущий этап содержит только переносимую Next.js-основу. Подробности приведены в [описании архитектуры](docs/ARCHITECTURE.md) и [дорожной карте](docs/ROADMAP.md).
+
+## Разработка на Windows, macOS и Linux
+
+Для всех платформ нужны Node.js 22 и npm. Команды одинаковы в PowerShell, Terminal и любой обычной командной строке:
+
+```text
 npm ci
-GITHUB_PAGES=true GITHUB_REPOSITORY=buscaeterna/ncrl-poetic-marker npm run build:pages
+npm run dev
 ```
 
-Р“РѕС‚РѕРІС‹Р№ СЃР°Р№С‚ РїРѕСЏРІРёС‚СЃСЏ РІ РєР°С‚Р°Р»РѕРіРµ `out/`.
+Откройте <http://localhost:3000/>. Основные команды не требуют Bash, `flock`, `curl`, GNU `timeout` или Unix-синтаксиса переменных окружения.
 
-## РўРµС…РЅРёС‡РµСЃРєР°СЏ РѕСЃРЅРѕРІР°
-
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
-
-## Prerequisites
-
-- Node.js `>=22.13.0`
-- Linux with `flock`, `curl`, and GNU `timeout`
-
-## Sites Lifecycle
-
-The Sites lifecycle CLI runs the locked dependency install before returning this checkout. Edit the source under `app/`, then checkpoint when a coherent milestone is ready to inspect or share. The remote Sites builder runs `npm run build` against the pushed commit. Do not repeat install or build as a normal pre-checkpoint step.
-
-This starter does not use `wrangler.jsonc`.
-
-`install:ci` is intentionally a single, non-retrying `npm ci`. It refuses a concurrent install for the same project, consumes a matching image-seeded npm cache with `--prefer-offline` while retaining registry fallback for a missing cache object, otherwise downloads and verifies the complete vinext tarball recorded in `package-lock.json`, limits npm to one socket, and terminates a stalled install. `build` applies a short timeout and then validates the Sites artifact. These helpers target Linux and use GNU `timeout`; they are not native macOS scripts.
-
-Scripts that need writable project-scoped home, npm, XDG, and temporary paths use `scripts/sites-env.sh`. The `dev` and `start` scripts honor the caller's runtime environment and keep Wrangler logs inside the checkout. The generated `.sites-runtime/` directory is disposable and ignored by Git.
-
-## Included Shape
-
-- edit site code under `app/`
-- `app/chatgpt-auth.ts` provides optional dispatch-owned ChatGPT sign-in helpers
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/index.ts` reads the D1 binding from the Cloudflare Worker environment
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
-
-## Workspace Auth Headers
-
-OpenAI workspace sites can read the current user's email from
-`oai-authenticated-user-email`.
-
-SIWC-authenticated workspace sites may also receive
-`oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty
-`name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by
-`oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
-
-Treat the full name as optional and fall back to email when it is absent:
-
-```tsx
-import { headers } from "next/headers";
-
-export default async function Home() {
-  const requestHeaders = await headers();
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
-
-  const displayName = fullName ?? email;
-  // ...
-}
+```text
+npm test
+npm run lint
+npm run build
+npm start
 ```
 
-## Optional Dispatch-Owned ChatGPT Sign-In
+`npm run build` создаёт обычную серверную сборку Next.js, а `npm start` запускает её. Статическая проверка GitHub Pages выполняется отдельно:
 
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs
-optional or required ChatGPT sign-in:
+```text
+npm run build:pages
+```
 
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send
-  anonymous visitors through Sign in with ChatGPT.
-- Use `chatGPTSignInPath(returnTo)` and `chatGPTSignOutPath(returnTo)` for
-  browser links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in
-  or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because
-  they depend on per-request identity headers.
+Результат будет записан в `out/`; скрипт сам задаёт переносимые значения окружения для Pages.
 
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the
-OAuth cookies, and identity header injection. Do not implement app routes for
-those reserved paths. Routes that do not import and call the helper remain
-anonymous-compatible.
+## Текущие гарантии
 
-SIWC establishes identity only; it does not prove workspace membership. Use the
-Sites hosting platform's access policy controls for workspace-wide restrictions,
-or enforce explicit server-side membership or allowlist checks.
+- редактирование и валидация метрической разметки;
+- импорт и экспорт корпусов без изменения их формата;
+- UTF-8 и Windows-1251;
+- локальные черновики в IndexedDB;
+- очередь произведений;
+- предварительная проверка и ручная корректировка разделения сырого TXT;
+- отдельная статическая публикация GitHub Pages.
 
-Use SIWC for account pages, user-specific dashboards, saved records, and write
-actions tied to the current ChatGPT user. Leave public content anonymous.
-
-## Diagnostic Commands
-
-- `npm run install:ci`: perform the one bounded lockfile install
-- `npm run dev`: start the Vite/Vinext development server
-- `npm run build`: build and validate the deployable Sites artifact
-- `npm run start`: start the built Vinext application
-- `npm test`: build, validate, and verify the rendered development-preview metadata
-- `npm run validate:artifact`: recheck an existing artifact's manifest and ESM `default.fetch` export
-- `npm run db:generate`: generate Drizzle migrations after schema changes
-
-Use build and validation commands for targeted diagnosis after a remote failure, not as part of the normal checkpoint path.
-
-The timeout defaults can be overridden for a controlled canary with `SITES_INSTALL_TIMEOUT`, `SITES_INSTALL_KILL_AFTER`, `SITES_BUILD_TIMEOUT`, and `SITES_BUILD_KILL_AFTER`. A timeout fails the command; the helpers never retry an unchanged install or build.
-
-## Learn More
-
-- [vinext Documentation](https://github.com/cloudflare/vinext)
-- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+На этом этапе проект не содержит Python backend, контейнеров, PostgreSQL, Redis, PDF/OCR или нейросетевых моделей.
