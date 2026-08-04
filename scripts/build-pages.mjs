@@ -9,6 +9,7 @@ const child = spawn(process.execPath, [nextExecutable, "build"], {
   env: {
     ...process.env,
     GITHUB_PAGES: "true",
+    NEXT_PUBLIC_RUNTIME_MODE: "static",
     GITHUB_REPOSITORY:
       process.env.GITHUB_REPOSITORY ?? "buscaeterna/ncrl-poetic-marker",
   },

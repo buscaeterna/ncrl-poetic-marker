@@ -30,6 +30,9 @@ button { color: inherit; }
 .brand strong { font-family: Georgia, 'Times New Roman', serif; font-size: 17px; font-weight: 600; }
 .brand span { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .12em; margin-top: 3px; }
 .top-actions { display: flex; align-items: center; gap: 9px; }
+.runtime-status { border-radius: 999px; padding: 5px 9px; background: var(--panel); color: var(--muted); font-size: 11px; white-space: nowrap; }
+.runtime-connected { background: var(--green-soft); color: var(--green); }
+.runtime-unavailable { background: var(--amber-soft); color: var(--amber); }
 .save-state { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 7px; margin-right: 10px; }
 .save-state i { width: 7px; height: 7px; border-radius: 50%; background: #bbb; }
 .save-state.is-saved i { background: #3d8a68; }

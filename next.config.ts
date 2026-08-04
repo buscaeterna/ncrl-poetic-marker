@@ -18,6 +18,6 @@ const nextConfig: NextConfig = isGitHubPages
         tsconfigPath: "tsconfig.pages.json",
       },
     }
-  : {};
+  : { output: "standalone" };
 
 export default nextConfig;
