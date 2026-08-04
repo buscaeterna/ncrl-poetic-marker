@@ -80,3 +80,7 @@ class ErrorResponse(BaseModel):
     code: str
     message: str
     current_revision: int | None = None
+
+
+class ErrorEnvelope(BaseModel):
+    detail: ErrorResponse

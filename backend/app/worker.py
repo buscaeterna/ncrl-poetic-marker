@@ -22,7 +22,7 @@ def workspace_summary(project: Project) -> dict:
         "corpora": len(workspace.get("corpora", [])),
         "poems": len(poems),
         "verse_lines": sum(len(poem.get("lines", [])) for poem in poems),
-        "modified_poems": sum(bool(poem.get("dirty")) for poem in poems),
+        "modified_poems": sum(bool(poem.get("modified", poem.get("dirty", False))) for poem in poems),
         "statuses": statuses,
         "revision": project.revision,
     }
