@@ -205,7 +205,7 @@ export function finalizeRawTextImport(draft: RawTextImportDraft): { corpus: Impo
   const base = sourceBase(draft.name);
   const documents = draft.poems.filter((poem) => poem.body.trim()).map((poem, index) => {
     const sourceName = `${base}-${String(index + 1).padStart(4, "0")}.htm`;
-    return { ...parsePoem(rawPoemHtml(draft.author.trim(), poem), sourceName, index, corpusId), status: "review" as const };
+    return { ...parsePoem(rawPoemHtml(draft.author.trim(), poem), sourceName, index, corpusId), status: "review" as const, rawText: true };
   });
   return { corpus, documents };
 }

@@ -52,6 +52,10 @@ input:focus, select:focus, textarea:focus { border-color: var(--green); box-shad
 .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .section-label { border-top: 1px solid var(--line); padding-top: 14px; margin: 6px 0 11px; text-transform: uppercase; letter-spacing: .11em; color: #888b83; font-size: 9px; font-weight: 700; }
 .checks { display: flex; flex-direction: column; gap: 7px; }
+.custom-effects { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.custom-effects small { flex-basis: 100%; color: var(--muted); }
+.custom-effects span { background: #eef1eb; border-radius: 14px; padding: 4px 5px 4px 10px; font-size: 12px; }
+.custom-effects button { border: 0; background: transparent; cursor: pointer; margin-left: 4px; }
 .check { flex-direction: row !important; align-items: center; gap: 8px !important; margin: 0 !important; cursor: pointer; color: #4d5049 !important; }
 .check input { appearance: none; width: 15px; height: 15px; min-height: 15px; padding: 0; border-radius: 3px; position: relative; }
 .check input:checked { background: var(--green); border-color: var(--green); }
@@ -93,6 +97,12 @@ input:focus, select:focus, textarea:focus { border-color: var(--green); box-shad
 .meta-row code { color: var(--green); font-size: 13px; font-weight: 700; }
 .meta-row span { font: 15px/1.5 Georgia, 'Times New Roman', serif; }
 .meta-row em { color: #aaa; }
+.meta-editor { padding: 14px 0; border-bottom: 1px solid #e8e9e4; }
+.meta-editor label { display: grid; grid-template-columns: 120px 1fr; align-items: center; }
+.meta-editor code { color: var(--green); font-weight: 700; }
+.meta-editor input { min-width: 0; }
+.meta-editor small { display: block; margin: 7px 0 8px 120px; color: var(--muted); }
+.meta-editor > div { display: flex; flex-wrap: wrap; gap: 6px; margin-left: 120px; }
 .metadata-note { color: var(--muted); font-size: 12px; line-height: 1.6; margin-top: 22px; max-width: 620px; }
 .source-view { position: relative; padding: 20px; height: calc(100vh - 220px); }
 .source-view textarea { width: 100%; height: 100%; resize: none; padding: 18px; font: 12px/1.55 'Courier New', monospace; color: #263b33; background: #f8faf8; }

@@ -141,6 +141,41 @@ test("unchanged imported HTML is emitted verbatim without structural loss", () =
   assert.equal(splitCorpus(exportCorpus(corpus, documents))[0].html, documents[0].originalHtml);
 });
 
+test("unchanged corpus export is byte-for-byte identical", () => {
+  const source = damagedFixture.replaceAll("\n", "\r\n") + "\r\n";
+  const imported = importCorpusBytes(encoder.encode(source), "exact.txt");
+  assert.deepEqual(exportCorpusBytes(imported.corpus, imported.documents), encoder.encode(source));
+});
+
+test("original-source fast path requires the complete ordered document manifest", () => {
+  const source = [
+    "<<<--- first.htm>>>",
+    "<meta name='title' content='Первое'><p class=verse>Первая строка</p>",
+    "<<<--- second.htm>>>",
+    "<meta name='title' content='Второе'><p class=verse>Вторая строка</p>",
+    "",
+  ].join("\r\n");
+  const imported = importCorpusBytes(encoder.encode(source), "two.txt");
+
+  assert.deepEqual(exportCorpusBytes(imported.corpus, imported.documents), encoder.encode(source));
+
+  const withoutFirst = exportCorpus(imported.corpus, imported.documents.slice(1));
+  assert.doesNotMatch(withoutFirst, /first\.htm|Первая строка/u);
+  assert.match(withoutFirst, /second\.htm/u);
+
+  const withoutSecond = exportCorpus(imported.corpus, imported.documents.slice(0, 1));
+  assert.doesNotMatch(withoutSecond, /second\.htm|Вторая строка/u);
+  assert.match(withoutSecond, /first\.htm/u);
+
+  assert.equal(exportCorpus(imported.corpus, []), "");
+
+  const modified = imported.documents.map((poem, index) => index === 0 ? { ...poem, modified: true, title: "Исправленное" } : poem);
+  assert.notEqual(exportCorpus(imported.corpus, modified), source);
+
+  const legacyCorpus = { ...imported.corpus, originalDocuments: undefined };
+  assert.notEqual(exportCorpus(legacyCorpus, imported.documents), source);
+});
+
 test("UTF-8 and Windows-1251 corpus exports retain encoding, content, markers, and order", () => {
   const twoDocuments = `${damagedFixture}\n<<<--- Matveeva-002.htm>>>\n<html><head><meta name='author' content='Матвеева'><meta name='title' content='ДВА'></head><body><p class=verse>Ёлка</p></body></html>`;
   const utf = importCorpusBytes(encoder.encode(twoDocuments), "utf.txt");
