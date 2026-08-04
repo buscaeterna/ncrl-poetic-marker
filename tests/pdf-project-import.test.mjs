@@ -12,7 +12,12 @@ test('real persistence retries 409 against fresh workspace without overwriting s
  assert.equal(calls.length,3);assert.deepEqual(result.workspace.poems.map(p=>p.id),['old','new']);assert.equal(JSON.parse(calls[2][1].body).revision,2);
 });
 test('lost successful response is idempotent when fresh project already contains provenance',async()=>{
- const saved=mergePdfImport(empty,additions,'pdf-1');let calls=0;const fetcher=async()=>{calls++;return calls===1?response(409,{}):response(200,project(2,saved))};
- const result=await persistPdfProjectImport({project:project(1,empty),baseWorkspace:empty,...additions,sourceDocumentId:'pdf-1',fetcher});
- assert.equal(calls,2);assert.equal(result.alreadyImported,true);assert.equal(result.workspace.poems.length,1);
+ const storedPoem={id:'stored-poem',provenance:{sourceDocumentId:'pdf-1'}},retryPoem={id:'retry-poem',provenance:{sourceDocumentId:'pdf-1'}};
+ const saved={corpora:[{id:'stored-corpus'}],poems:[storedPoem],activeId:'stored-poem',queue:['stored-poem']};
+ let calls=0;const fetcher=async()=>{calls++;return calls===1?response(409,{}):response(200,project(2,saved))};
+ const result=await persistPdfProjectImport({project:project(1,empty),baseWorkspace:empty,corpora:[{id:'retry-corpus'}],poems:[retryPoem],sourceDocumentId:'pdf-1',fetcher});
+ assert.equal(calls,2);assert.equal(result.alreadyImported,true);assert.equal(result.activePoemId,'stored-poem');
+ assert.deepEqual(result.savedPoems.map(poem=>poem.id),['stored-poem']);
+ assert.deepEqual(result.workspace,{corpora:[{id:'stored-corpus'}],poems:[storedPoem],activeId:'stored-poem',queue:['stored-poem']});
+ assert.equal(result.workspace.poems.some(poem=>poem.id==='retry-poem'),false);
 });

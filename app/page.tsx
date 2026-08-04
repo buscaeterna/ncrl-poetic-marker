@@ -429,7 +429,9 @@ export default function Home() {
     const result=await persistPdfProjectImport({project:serverProject,baseWorkspace:{corpora,poems,activeId,queue},corpora:newCorpora,poems:newPoems,sourceDocumentId});
     const workspace=result.workspace;
     setServerProject(result.project as ServerProject); setCorpora(workspace.corpora);setPoems(workspace.poems);setQueue(workspace.queue);
-    if(newPoems[0]){setActiveId(newPoems[0].id);setDoc(poemToDocument(newPoems[0]));setSelected(0)}
+    const savedPoem=workspace.poems.find(poem=>poem.id===result.activePoemId);
+    if(!savedPoem)throw new Error("Сохранённое произведение отсутствует в workspace проекта");
+    setActiveId(savedPoem.id);setDoc(poemToDocument(savedPoem));setSelected(0);
   };
 
   const confirmRawImport = async (drafts: RawTextImportDraft[]) => {

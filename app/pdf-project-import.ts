@@ -15,12 +15,18 @@ export async function persistPdfProjectImport(args:{project:RevisionedProject;ba
   const put=async(project:RevisionedProject,workspace:CorpusWorkspace)=>fetcher(`/api/v1/projects/${project.id}`,{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({name:project.name,schema_version:project.schema_version,revision:project.revision,workspace})});
   let workspace=mergePdfImport(args.baseWorkspace,{corpora:args.corpora,poems:args.poems},args.sourceDocumentId);
   let response=await put(args.project,workspace);
-  if(response.status!==409) return {project:await decode<RevisionedProject>(response),workspace,alreadyImported:false};
+  const completed=(project:RevisionedProject,fallback:CorpusWorkspace,alreadyImported:boolean)=>{
+    const actualWorkspace=project.workspace??fallback;
+    const savedPoems=actualWorkspace.poems.filter(poem=>poem.provenance?.sourceDocumentId===args.sourceDocumentId);
+    if(!savedPoems.length)throw new Error("Saved PDF poems are missing from the server workspace");
+    return {project,workspace:actualWorkspace,alreadyImported,activePoemId:savedPoems[0].id,savedPoems};
+  };
+  if(response.status!==409){const saved=await decode<RevisionedProject>(response);return completed(saved,workspace,false)}
   const fresh=await decode<RevisionedProject>(await fetcher(`/api/v1/projects/${args.project.id}`));
   const freshWorkspace=fresh.workspace!;
   const alreadyImported=freshWorkspace.poems.some(poem=>poem.provenance?.sourceDocumentId===args.sourceDocumentId);
-  if(alreadyImported)return {project:fresh,workspace:freshWorkspace,alreadyImported:true};
+  if(alreadyImported)return completed(fresh,freshWorkspace,true);
   workspace=mergePdfImport(freshWorkspace,{corpora:args.corpora,poems:args.poems},args.sourceDocumentId);
   response=await put(fresh,workspace);
-  return {project:await decode<RevisionedProject>(response),workspace,alreadyImported:false};
+  return completed(await decode<RevisionedProject>(response),workspace,false);
 }
