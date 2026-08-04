@@ -1,7 +1,7 @@
 "use client";
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
-import { exportCorpus, exportPoem, importCorpusBytes, type ImportedCorpus, type ImportedPoem, type ProcessingStatus } from "./corpus";
+import { encodeCorpus, exportCorpusBytes, exportPoem, importCorpusBytes, type ImportedCorpus, type ImportedPoem, type ProcessingStatus } from "./corpus";
 import { loadWorkspace, saveWorkspace } from "./corpus-db";
 
 type Clause = "м" | "ж" | "д" | "г";
@@ -330,7 +330,7 @@ export default function Home() {
       const next = typeof updater === "function" ? updater(current) : updater;
       if (activeId) setPoems((items) => items.map((poem) => poem.id === activeId ? {
         ...poem, author: next.author, title: next.title, date: next.date, cycle: next.cycle,
-        lines: next.lines, dirty: true, fields: { ...poem.fields, "строфика": next.strophe, "гр_строфика": next.graphicStrophe },
+        lines: next.lines, dirty: true, modified: true, fields: { ...poem.fields, "строфика": next.strophe, "гр_строфика": next.graphicStrophe },
       } : poem));
       return next;
     });
@@ -378,15 +378,21 @@ export default function Home() {
     setPoems((items) => items.map((poem) => poem.id === activeId ? { ...poem, status, dirty: true } : poem)); setSaved(false);
   };
   const downloadCorpora = () => corpora.forEach((corpus, index) => window.setTimeout(() => {
-    const blob = new Blob([exportCorpus(corpus, poems)], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob); const anchor = document.createElement("a");
-    anchor.href = url; anchor.download = `${corpus.name.replace(/\.(txt|html?)$/i, "")}-export.txt`; anchor.click(); URL.revokeObjectURL(url);
+    try {
+      const blob = new Blob([exportCorpusBytes(corpus, poems)], { type: `text/plain;charset=${corpus.encoding}` });
+      const url = URL.createObjectURL(blob); const anchor = document.createElement("a");
+      anchor.href = url; anchor.download = `${corpus.name.replace(/\.(txt|html?)$/i, "")}-export.txt`; anchor.click(); URL.revokeObjectURL(url);
+    } catch (error) { window.alert(error instanceof Error ? error.message : "Не удалось экспортировать корпус"); }
   }, index * 150));
 
   const download = () => {
     const activePoem = poems.find((poem) => poem.id === activeId);
     const content = activePoem ? exportPoem({ ...activePoem, author: doc.author, title: doc.title, date: doc.date, cycle: doc.cycle }, doc.lines) : exported;
-    const blob = new Blob([content], { type: "text/html;charset=utf-8" });
+    const corpus = activePoem && corpora.find((item) => item.id === activePoem.corpusId);
+    let bytes: Uint8Array<ArrayBuffer>;
+    try { bytes = encodeCorpus(content, corpus?.encoding ?? "utf-8"); }
+    catch (error) { window.alert(error instanceof Error ? error.message : "Не удалось экспортировать произведение"); return; }
+    const blob = new Blob([bytes], { type: `text/html;charset=${corpus?.encoding ?? "utf-8"}` });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
