@@ -1,8 +1,10 @@
 "use client";
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
-import { encodeCorpus, exportCorpusBytes, exportPoem, importCorpusBytes, type ImportedCorpus, type ImportedPoem, type ProcessingStatus } from "./corpus";
+import { decodeCorpus, encodeCorpus, exportCorpusBytes, exportPoem, importCorpusBytes, splitCorpus, type ImportedCorpus, type ImportedPoem, type ProcessingStatus } from "./corpus";
 import { loadWorkspace, saveWorkspace } from "./corpus-db";
+import { RawImportDialog } from "./raw-import-dialog";
+import { createRawTextImport, finalizeRawTextImport, type RawTextImportDraft } from "./raw-text";
 
 type Clause = "м" | "ж" | "д" | "г";
 type Meter = "" | "Я" | "Х" | "Д" | "Ан" | "Аф" | "Дк" | "Тк" | "Ак" | "О";
@@ -286,6 +288,7 @@ export default function Home() {
   const [poems, setPoems] = useState<ImportedPoem[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [queue, setQueue] = useState<string[]>([]);
+  const [pendingRawImport, setPendingRawImport] = useState<RawTextImportDraft[] | null>(null);
   const [workspaceReady, setWorkspaceReady] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const meta = useMemo(() => deriveMetadata(doc), [doc]);
@@ -354,15 +357,44 @@ export default function Home() {
   const onFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = [...(event.target.files ?? [])];
     if (!files.length) return;
-    const imported = await Promise.all(files.map(async (file, order) => importCorpusBytes(await file.arrayBuffer(), file.name, corpora.length + order)));
+    try {
+      const loaded = await Promise.all(files.map(async (file, order) => ({
+        file, order: corpora.length + order, bytes: new Uint8Array(await file.arrayBuffer()),
+      })));
+      const imported = [] as ReturnType<typeof importCorpusBytes>[];
+      const raw = [] as RawTextImportDraft[];
+      for (const item of loaded) {
+        const decoded = decodeCorpus(item.bytes);
+        if (splitCorpus(decoded.text).length) imported.push(importCorpusBytes(item.bytes, item.file.name, item.order));
+        else raw.push(createRawTextImport(item.bytes, item.file.name, item.order));
+      }
+      const newCorpora = imported.map((item) => item.corpus);
+      const newPoems = imported.flatMap((item) => item.documents);
+      if (newCorpora.length) {
+        setCorpora((items) => [...items, ...newCorpora]);
+        setPoems((items) => [...items, ...newPoems]);
+        setQueue((items) => [...items, ...newPoems.map((poem) => poem.id)]);
+        if (newPoems[0]) { setActiveId(newPoems[0].id); setDoc(poemToDocument(newPoems[0])); setSelected(0); }
+        setSaved(false);
+      }
+      if (raw.length) setPendingRawImport(raw);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Не удалось прочитать выбранные файлы");
+    } finally {
+      event.target.value = "";
+    }
+  };
+
+  const confirmRawImport = (drafts: RawTextImportDraft[]) => {
+    const imported = drafts.map(finalizeRawTextImport);
     const newCorpora = imported.map((item) => item.corpus);
     const newPoems = imported.flatMap((item) => item.documents);
     setCorpora((items) => [...items, ...newCorpora]);
     setPoems((items) => [...items, ...newPoems]);
     setQueue((items) => [...items, ...newPoems.map((poem) => poem.id)]);
     if (newPoems[0]) { setActiveId(newPoems[0].id); setDoc(poemToDocument(newPoems[0])); setSelected(0); }
+    setPendingRawImport(null);
     setSaved(false);
-    event.target.value = "";
   };
 
   const selectPoem = (poem: ImportedPoem) => { setActiveId(poem.id); setDoc(poemToDocument(poem)); setSelected(0); };
@@ -527,6 +559,7 @@ export default function Home() {
           <div className="rule-card"><span>Приоритет разбора</span><strong>Силлабо-тоника → Дк → Тк → Ак → Вл</strong><p>Выбирайте наиболее строгую схему, которую допускают ударения и контекст стихотворения.</p></div>
         </aside>
       </section>
+      {pendingRawImport && <RawImportDialog drafts={pendingRawImport} onCancel={() => setPendingRawImport(null)} onConfirm={confirmRawImport} />}
     </main>
   );
 }

@@ -110,6 +110,36 @@ input:focus, select:focus, textarea:focus { border-color: var(--green); box-shad
 .queue-delete { position: absolute; top: 4px; right: 5px; border: 0; background: transparent; color: var(--red); cursor: pointer; }
 .status-control { display: flex; align-items: center; gap: 7px; margin-top: 9px; font-size: 10px; color: var(--muted); }.status-control select { width: 170px; padding: 4px; }
 
+.raw-dialog-backdrop { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 24px; background: rgba(24, 28, 24, .56); backdrop-filter: blur(3px); }
+.raw-dialog { width: min(1120px, 100%); height: min(780px, calc(100vh - 48px)); display: grid; grid-template-rows: auto auto auto minmax(0, 1fr) auto; background: var(--paper); border: 1px solid #aeb2aa; border-radius: 12px; overflow: hidden; box-shadow: 0 24px 80px rgba(0, 0, 0, .22); }
+.raw-dialog-header { display: flex; justify-content: space-between; align-items: flex-start; padding: 20px 22px 16px; border-bottom: 1px solid var(--line); background: var(--white); }
+.raw-dialog-header p { margin: 0 0 5px; color: var(--green); font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .12em; }
+.raw-dialog-header h2 { margin: 0; font: 500 22px/1.25 Georgia, 'Times New Roman', serif; }
+.raw-dialog-close { border: 0; background: transparent; color: var(--muted); font-size: 25px; cursor: pointer; }
+.raw-dialog-toolbar { display: grid; grid-template-columns: minmax(210px, .8fr) minmax(260px, 1.2fr) auto; align-items: end; gap: 12px; padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.raw-dialog-toolbar label, .raw-poem-editor label { display: flex; flex-direction: column; gap: 5px; color: #65685f; font-size: 10px; }
+.raw-dialog-toolbar input, .raw-dialog-toolbar select, .raw-poem-editor input { height: 35px; padding: 7px 9px; font-size: 13px; }
+.raw-dialog-summary { min-height: 42px; display: flex; align-items: center; gap: 18px; padding: 8px 20px; border-bottom: 1px solid var(--line); background: #f8f9f5; font-size: 11px; }
+.raw-dialog-summary span { white-space: nowrap; color: var(--muted); }.raw-dialog-summary strong { color: var(--ink); }
+.raw-dialog-summary p { margin: 0 0 0 auto; color: var(--muted); font-size: 10px; text-align: right; }
+.raw-dialog-content { min-height: 0; display: grid; grid-template-columns: 310px minmax(0, 1fr); }
+.raw-poem-list { overflow-y: auto; padding: 10px; border-right: 1px solid var(--line); background: #f1f2ed; }
+.raw-poem-list > button { width: 100%; display: grid; grid-template-columns: 10px minmax(0, 1fr); gap: 8px; align-items: start; border: 1px solid transparent; border-bottom-color: #dfe1da; border-radius: 5px; padding: 9px 8px; background: transparent; text-align: left; cursor: pointer; }
+.raw-poem-list > button:hover { background: rgba(255, 255, 255, .65); }.raw-poem-list > button.active { border-color: #9bb4a8; background: white; box-shadow: 2px 0 0 var(--green) inset; }
+.raw-poem-list button strong, .raw-poem-list button small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.raw-poem-list button strong { font: 13px/1.3 Georgia, 'Times New Roman', serif; }.raw-poem-list button small { margin-top: 4px; color: var(--muted); font-size: 9px; }
+.raw-confidence { width: 7px; height: 7px; margin-top: 5px; border-radius: 50%; background: var(--red); }.raw-confidence.high { background: #3d8a68; }.raw-confidence.medium { background: #c68a35; }
+.raw-empty { padding: 18px 10px; color: var(--muted); font-size: 11px; }
+.raw-poem-editor { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 12px; padding: 18px 20px; background: var(--white); }
+.raw-poem-editor label:nth-of-type(2) { min-height: 0; flex: 1; }
+.raw-poem-editor textarea { width: 100%; min-height: 250px; height: 100%; resize: none; padding: 14px; font: 15px/1.55 Georgia, 'Times New Roman', serif; white-space: pre-wrap; }
+.raw-edit-actions { display: flex; align-items: center; gap: 8px; }.raw-edit-actions .delete { margin-left: auto; font-size: 11px; }
+.raw-help { margin: -4px 0 0; color: var(--muted); font-size: 10px; line-height: 1.45; }
+.raw-message { margin: 0; padding: 8px 10px; border-radius: 5px; background: var(--green-soft); color: var(--green); font-size: 10px; }
+.raw-no-selection { margin: auto; color: var(--muted); font-size: 12px; }
+.raw-dialog-footer { display: flex; justify-content: flex-end; gap: 9px; padding: 13px 20px; border-top: 1px solid var(--line); background: var(--panel); }
+.raw-dialog button:disabled { cursor: default; opacity: .45; }
+
 .score { border-radius: 999px; padding: 3px 7px; background: var(--green-soft); color: var(--green); font: 10px Arial, sans-serif; }
 .score.has-errors { background: var(--red-soft); color: var(--red); }
 .line-inspector { border-bottom: 1px solid var(--line); padding-bottom: 14px; margin-bottom: 14px; }
@@ -154,4 +184,11 @@ input:focus, select:focus, textarea:focus { border-color: var(--green); box-shad
   .line-head, .line-row { min-width: 760px; }
   .right-panel { display: block; border-left: 0; }
   .issues { display: flex; }
+  .raw-dialog-backdrop { padding: 0; place-items: stretch; }
+  .raw-dialog { width: 100%; height: 100vh; border: 0; border-radius: 0; }
+  .raw-dialog-toolbar { grid-template-columns: 1fr; }.raw-dialog-toolbar .button { justify-self: start; }
+  .raw-dialog-summary p { display: none; }
+  .raw-dialog-content { grid-template-columns: 145px minmax(0, 1fr); }
+  .raw-poem-list button small { white-space: normal; }
+  .raw-poem-editor { padding: 12px; }.raw-edit-actions { flex-wrap: wrap; }.raw-edit-actions .delete { margin-left: 0; }
 }
