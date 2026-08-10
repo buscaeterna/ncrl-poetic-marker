@@ -1,7 +1,7 @@
 "use client";
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
-import { decodeCorpus, encodeCorpus, exportCorpusBytes, exportPoem, importCorpusBytes, splitCorpus, type ImportedCorpus, type ImportedPoem, type ProcessingStatus } from "./corpus";
+import { decodeCorpus, encodeCorpus, exportCorpusBytes, exportPoem, importCorpusBytes, splitCorpus, type ImportedCorpus, type ImportedPoem, type ProcessingStatus, type StressSuggestion } from "./corpus";
 import { loadWorkspace, saveWorkspace } from "./corpus-db";
 import { RawImportDialog } from "./raw-import-dialog";
 import { PdfImportDialog } from "./pdf-import-dialog";
@@ -11,6 +11,7 @@ import { ruleById, validateAnnotation } from "./annotation-rules";
 import { RuntimeIndicator } from "./runtime-indicator";
 import { ProjectsDialog, type ServerProject } from "./projects-dialog";
 import { effectiveMetadata, metadataFromFields, restoreOriginalValue, setManualValue, type AutomaticMetadata, type DocumentMode, type EditorMetadata, type MetadataKey } from "./editor-metadata";
+import { StressDialog } from "./stress-dialog";
 
 type Clause = "м" | "ж" | "д" | "г";
 type Meter = "" | "Я" | "Х" | "Д" | "Ан" | "Аф" | "Дк" | "Тк" | "Ак" | "О";
@@ -25,6 +26,7 @@ type VerseLine = {
   breakBefore: boolean;
   starred: boolean;
   note: string;
+  stressSuggestion?: StressSuggestion;
 };
 
 type DocumentState = {
@@ -307,6 +309,7 @@ export default function Home() {
   const [projectsOpen, setProjectsOpen] = useState(false);
   const [serverProject, setServerProject] = useState<ServerProject | null>(null);
   const [pdfOpen, setPdfOpen] = useState(false);
+  const [stressOpen, setStressOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const meta = useMemo(() => deriveMetadata(doc), [doc]);
   const issues = useMemo(() => validate(doc, meta), [doc, meta]);
@@ -373,7 +376,7 @@ export default function Home() {
   };
   const patchDoc = (value: Partial<DocumentState>) => updateDoc((current) => ({ ...current, ...value }));
   const patchLine = (index: number, value: Partial<VerseLine>) => updateDoc((current) => ({
-    ...current, lines: current.lines.map((line, i) => i === index ? { ...line, ...value } : line),
+    ...current, lines: current.lines.map((line, i) => i === index ? (value.text !== undefined ? { ...line, ...value, stressSuggestion: line.stressSuggestion && line.stressSuggestion.sourceText !== value.text ? { ...line.stressSuggestion, state: "stale" as const } : line.stressSuggestion } : { ...line, ...value }) : line),
   }));
   const patchMetadata = (key: MetadataKey, value: string) => updateDoc((current) => ({
     ...current, metadata: setManualValue(current.metadata, key, value),
@@ -503,6 +506,7 @@ export default function Home() {
           <input ref={fileRef} type="file" multiple accept=".txt,.htm,.html,text/plain,text/html" hidden onChange={onFile} />
           <button className="button secondary" onClick={() => fileRef.current?.click()}><Icon>↥</Icon>Импорт</button>
           {process.env.NEXT_PUBLIC_RUNTIME_MODE !== "static" && <button className="button secondary" onClick={() => setPdfOpen(true)}>Импорт PDF</button>}
+          {process.env.NEXT_PUBLIC_RUNTIME_MODE !== "static" && <button className="button secondary" disabled={!serverProject} onClick={() => setStressOpen(true)}>Автоматические ударения</button>}
           <button className="button primary" onClick={download}><Icon>↓</Icon>Скачать HTML</button>
         </div>
       </header>
@@ -642,6 +646,7 @@ export default function Home() {
           setPendingPdfSource(context);setPendingRawImport([createRawTextImport(bytes,source.original_name,corpora.length)]);setPdfOpen(false);
         }
       }} />}
+      {stressOpen && serverProject && <StressDialog project={serverProject} workspace={{corpora, poems, activeId, queue}} onProject={setServerProject} onWorkspace={(workspace) => { setCorpora(workspace.corpora); setPoems(workspace.poems); setActiveId(workspace.activeId); setQueue(workspace.queue); const active=workspace.poems.find((poem)=>poem.id===workspace.activeId); if(active)setDoc(poemToDocument(active)); saveWorkspace(workspace); }} onClose={() => setStressOpen(false)} />}
     </main>
   );
 }

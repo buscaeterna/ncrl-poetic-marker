@@ -80,3 +80,33 @@ jobs:
       - name: Stop stack
         if: always()
         run: docker compose down --volumes --remove-orphans
+
+  model-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/cache@v5
+        with:
+          path: ~/.cache/ncrl-models
+          key: silero-stress-1.4-c772725dc03c647e
+      - name: Restore trusted model artifact
+        run: |
+          mkdir -p ~/.cache/ncrl-models
+          file=~/.cache/ncrl-models/silero_stress-1.4-py3-none-any.whl
+          test -f "$file" || curl --fail --location -o "$file" https://files.pythonhosted.org/packages/ba/72/5edf26c74a8d48640108976db5bc3e9e59722b63ccaa36b21894bf79ad77/silero_stress-1.4-py3-none-any.whl
+          echo 'c772725dc03c647e2b33961280dc35f41b7f43ac0861575884fea0c2a6cb8ae2  '"$file" | sha256sum --check
+      - name: Start local services without GPU
+        run: docker compose up --build -d --wait
+      - name: Offline-import and verify model
+        run: |
+          curl --fail -F file=@$HOME/.cache/ncrl-models/silero_stress-1.4-py3-none-any.whl http://localhost:8080/api/v1/stress/models/silero-stress/1.4/import
+          for i in $(seq 1 60); do state=$(curl -s http://localhost:8080/api/v1/stress/models | jq -r '.[0].state'); test "$state" = installed && break; test "$state" = error && exit 1; sleep 1; done
+          test "$state" = installed
+          docker compose exec -T api python tests/silero_real_smoke.py
+      - name: Model survives API and worker restart
+        run: |
+          docker compose restart api worker
+          docker compose up -d --wait api worker
+          docker compose exec -T api python tests/silero_real_smoke.py
+      - if: always()
+        run: docker compose down --volumes --remove-orphans
