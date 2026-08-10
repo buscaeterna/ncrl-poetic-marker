@@ -11,7 +11,68 @@ export type CorpusLine = {
   breakBefore: boolean;
   starred: boolean;
   note: string;
+  /** A machine result is review data only; exporters continue to use `text`. */
+  stressSuggestion?: StressSuggestion;
 };
+
+export type StressWord = {
+  original: string; normalized: string; position: number | null; confidence: number;
+  alternatives: number[]; ambiguous: boolean;
+  source: "model" | "dictionary" | "rule" | "ё" | "existing";
+  warning?: string;
+};
+
+export type StressSuggestion = {
+  sourceText: string; suggestedText: string; sourceHash: string;
+  state: "pending" | "accepted" | "rejected" | "stale";
+  confidence: number; uncertainWords: StressWord[]; words: StressWord[];
+  engine: string; engineVersion: string; analysedAt: string;
+  acceptedWords?: Array<number | { wordIndex: number; position: number }>;
+};
+
+export function effectiveLineText(line: CorpusLine) { return line.text; }
+
+/** Accept only a result made for the current text. Existing/imported accents win. */
+export function sha256Text(value: string): string {
+  const bytes=new TextEncoder().encode(value), input=[...bytes];const bitLength=input.length*8;
+  input.push(128);while(input.length%64!==56)input.push(0);for(let shift=56;shift>=0;shift-=8)input.push(Math.floor(bitLength/2**shift)&255);
+  const h=[0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19],primes:number[]=[];
+  for(let n=2;primes.length<64;n++)if(!primes.some(p=>n%p===0))primes.push(n);const k=primes.map(p=>Math.floor((Math.cbrt(p)%1)*2**32)>>>0),rotr=(x:number,n:number)=>(x>>>n)|(x<<(32-n));
+  for(let offset=0;offset<input.length;offset+=64){const w=Array<number>(64);for(let i=0;i<16;i++)w[i]=(input[offset+i*4]<<24)|(input[offset+i*4+1]<<16)|(input[offset+i*4+2]<<8)|input[offset+i*4+3];for(let i=16;i<64;i++){const a=w[i-15],b=w[i-2];w[i]=(w[i-16]+(rotr(a,7)^rotr(a,18)^(a>>>3))+w[i-7]+(rotr(b,17)^rotr(b,19)^(b>>>10)))>>>0}let [a,b,c,d,e,f,g,z]=h;for(let i=0;i<64;i++){const t1=(z+(rotr(e,6)^rotr(e,11)^rotr(e,25))+((e&f)^(~e&g))+k[i]+w[i])>>>0,t2=((rotr(a,2)^rotr(a,13)^rotr(a,22))+((a&b)^(a&c)^(b&c)))>>>0;z=g;g=f;f=e;e=(d+t1)>>>0;d=c;c=b;b=a;a=(t1+t2)>>>0}const v=[a,b,c,d,e,f,g,z];for(let i=0;i<8;i++)h[i]=(h[i]+v[i])>>>0}
+  return h.map(x=>x.toString(16).padStart(8,"0")).join("");
+}
+
+const acceptedChoices=(suggestion:StressSuggestion)=>(suggestion.acceptedWords??[]).map(value=>typeof value==="number"?{wordIndex:value,position:suggestion.words[value]?.position??-1}:value);
+const applyChoice=(text:string,wordIndex:number,position:number)=>{const match=[...text.matchAll(stressToken)][wordIndex];if(!match||match[0].includes("`")||position<0||position>=match[0].length)return null;const token=match[0].slice(0,position+1)+"`"+match[0].slice(position+1);return text.slice(0,match.index)+token+text.slice(match.index!+match[0].length)};
+/** Verifies both the immutable analysis input and every explicitly accepted word. */
+export function stressSuggestionIsCurrent(line:CorpusLine):boolean {const s=line.stressSuggestion;if(!s||s.state==="stale"||sha256Text(s.sourceText)!==s.sourceHash)return false;let expected=s.sourceText;for(const choice of acceptedChoices(s)){const next=applyChoice(expected,choice.wordIndex,choice.position);if(next===null)return false;expected=next}return expected===line.text}
+
+export function acceptStressSuggestion(line: CorpusLine): CorpusLine {
+  const suggestion = line.stressSuggestion;
+  if (!suggestion || !stressSuggestionIsCurrent(line)) return line;
+  const proposed=[...suggestion.suggestedText.matchAll(stressToken)];let index=0;
+  const text=line.text.replace(stressToken,(token)=>{const candidate=proposed[index++]?.[0];return token.includes("`")?token:(candidate??token)});
+  return { ...line, text, stressSuggestion: { ...suggestion, state: "accepted" } };
+}
+
+const stressToken = /[А-Яа-яЁёІіѢѣ](?:[А-Яа-яЁёІіѢѣ]|(?<=[аеёиоуыэюяАЕЁИОУЫЭЮЯѢѣ])`)*(?:-[А-Яа-яЁёІіѢѣ](?:[А-Яа-яЁёІіѢѣ]|(?<=[аеёиоуыэюяАЕЁИОУЫЭЮЯѢѣ])`)*)*/gu;
+export function acceptStressWord(line: CorpusLine, wordIndex: number, position?: number): CorpusLine {
+  const suggestion=line.stressSuggestion;
+  if(!suggestion||!stressSuggestionIsCurrent(line)||acceptedChoices(suggestion).some(value=>value.wordIndex===wordIndex))return line;
+  const matches=[...line.text.matchAll(stressToken)], word=suggestion.words[wordIndex], match=matches[wordIndex];
+  if(!word||!match||match[0].includes("`"))return line;
+  const chosen=position??word.position;
+  if(chosen===null||chosen<0||chosen>=match[0].length)return line;
+  const token=match[0].slice(0,chosen+1)+"`"+match[0].slice(chosen+1);
+  const text=line.text.slice(0,match.index)+token+line.text.slice(match.index!+match[0].length);
+  return {...line,text,stressSuggestion:{...suggestion,acceptedWords:[...acceptedChoices(suggestion),{wordIndex,position:chosen}]}};
+}
+
+export function editLineText(line: CorpusLine, text: string): CorpusLine {
+  const suggestion = line.stressSuggestion;
+  return { ...line, text, stressSuggestion: suggestion && suggestion.sourceText !== text
+    ? { ...suggestion, state: "stale" } : suggestion };
+}
 
 export type StructuralElement = {
   kind: "H1" | "H2" | "H3" | "date" | "epigraf" | "verse";

@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./ncrl.db"
     max_workspace_bytes: int = 20 * 1024 * 1024
     files_dir: str = "/var/lib/ncrl/files"
+    models_dir: str = "/var/lib/ncrl/models"
     max_pdf_bytes: int = 200 * 1024 * 1024
     max_pdf_pages: int = 1000
     pdf_render_dpi: int = 200

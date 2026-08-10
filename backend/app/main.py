@@ -1,11 +1,12 @@
 import hashlib
 import json
+import os
 import shutil
 import uuid
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 from sqlalchemy import select, text, update
 from sqlalchemy.orm import Session
@@ -16,7 +17,9 @@ from .pdf import inspect_pdf, safe_path
 from .schemas import (CapabilitiesResponse, ErrorEnvelope, HealthResponse, JobCreate,
                       JobResponse, ProjectCreate, ProjectDetail, ProjectSummary, ProjectUpdate)
 from .schemas import SourcePageUpdate
+from .schemas import StressJobCreate
 from .settings import settings
+from .model import MANIFEST, claim_install, fail_install, get_spec, install, installed, remove, state, verify_file
 
 app = FastAPI(title="NCRL Poetic Marker API", version=settings.version, docs_url="/api/docs", openapi_url="/api/openapi.json")
 
@@ -30,7 +33,7 @@ def database():
 async def limit_body(request: Request, call_next):
     if request.method in {"POST", "PUT", "PATCH"}:
         length = request.headers.get("content-length")
-        limit = settings.max_pdf_bytes + 1024 * 1024 if "/sources" in request.url.path else settings.max_workspace_bytes
+        limit = settings.max_pdf_bytes + 1024 * 1024 if "/sources" in request.url.path else ((max(s.size for s in MANIFEST.values())+1024*1024) if "/stress/models/" in request.url.path else settings.max_workspace_bytes)
         if length and int(length) > limit:
             limit_mib = limit / (1024 * 1024)
             label = f"{limit_mib:g} MiB"
@@ -54,7 +57,7 @@ def ready(db: Session = Depends(database)) -> HealthResponse:
 
 @app.get("/api/v1/capabilities", response_model=CapabilitiesResponse, tags=["system"])
 def capabilities() -> CapabilitiesResponse:
-    return CapabilitiesResponse()
+    return CapabilitiesResponse(stress=True, local_model=any(installed(spec) for spec in MANIFEST.values()))
 
 
 def missing(kind: str = "project") -> HTTPException:
@@ -261,3 +264,76 @@ def cancel_job(job_id: UUID, db: Session = Depends(database)):
     job.status, job.finished_at = JobStatus.cancelled, utcnow()
     db.commit(); db.refresh(job)
     return job
+
+@app.get("/api/v1/stress/models", tags=["stress"])
+def stress_models():
+    return [state(spec) for spec in MANIFEST.values()]
+
+@app.post("/api/v1/stress/models/{model_id}/{version}/install", status_code=202, tags=["stress"])
+def install_model(model_id: str, version: str, tasks: BackgroundTasks):
+    try: spec=get_spec(model_id,version)
+    except ValueError as exc: raise HTTPException(404,detail={"code":"model_not_found","message":str(exc)}) from exc
+    current=state(spec)
+    if not claim_install(spec): raise HTTPException(409,detail={"code":"model_installing","message":"Model installation is already active"})
+    tasks.add_task(install,spec)
+    return {**current,"state":"installing","progress":0}
+
+@app.post("/api/v1/stress/models/{model_id}/{version}/import", status_code=202, tags=["stress"])
+async def import_model(model_id: str, version: str, tasks: BackgroundTasks, file: UploadFile=File()):
+    try: spec=get_spec(model_id,version)
+    except ValueError as exc: raise HTTPException(404,detail={"code":"model_not_found","message":str(exc)}) from exc
+    if (file.filename or "") != spec.filename: raise HTTPException(422,detail={"code":"invalid_model_file","message":"Filename does not match trusted manifest"})
+    if not claim_install(spec): raise HTTPException(409,detail={"code":"model_installing","message":"Model installation is already active"})
+    import tempfile
+    parent=Path(settings.models_dir).resolve();parent.mkdir(parents=True,exist_ok=True)
+    descriptor,name=tempfile.mkstemp(prefix=f".{spec.id}-{spec.version}-",suffix=".upload",dir=parent);os.close(descriptor)
+    temporary=Path(name);size=0
+    try:
+        with temporary.open("wb") as output:
+            while chunk:=await file.read(1024*1024):
+                size+=len(chunk)
+                if size>spec.size: raise HTTPException(422,detail={"code":"invalid_model_size","message":"Model exceeds trusted size"})
+                output.write(chunk)
+        try: verify_file(temporary,spec)
+        except ValueError as exc: raise HTTPException(422,detail={"code":"invalid_model_digest","message":str(exc)}) from exc
+        tasks.add_task(_install_uploaded,spec,temporary)
+        return {**state(spec),"state":"installing","progress":0}
+    except Exception as exc:
+        temporary.unlink(missing_ok=True);fail_install(spec,exc);raise
+
+def _install_uploaded(spec, temporary):
+    try: install(spec,temporary)
+    finally: temporary.unlink(missing_ok=True)
+
+@app.post("/api/v1/stress/models/{model_id}/{version}/verify", tags=["stress"])
+def verify_model(model_id: str, version: str):
+    try: spec=get_spec(model_id,version)
+    except ValueError as exc: raise HTTPException(404,detail={"code":"model_not_found","message":str(exc)}) from exc
+    if not installed(spec): raise HTTPException(409,detail={"code":"model_damaged","message":"Model is not installed or is damaged"})
+    return state(spec)
+
+@app.delete("/api/v1/stress/models/{model_id}/{version}", status_code=204, tags=["stress"])
+def delete_model(model_id: str, version: str):
+    try: spec=get_spec(model_id,version)
+    except ValueError as exc: raise HTTPException(404,detail={"code":"model_not_found","message":str(exc)}) from exc
+    remove(spec)
+
+@app.post("/api/v1/projects/{project_id}/stress/jobs", status_code=202, tags=["stress"])
+def create_stress_job(project_id: UUID, body: StressJobCreate, db: Session = Depends(database)):
+    project=db.get(Project,project_id)
+    if not project: raise missing()
+    if project.revision != body.revision:
+        raise HTTPException(409,detail={"code":"revision_conflict","message":"Project has a newer revision","current_revision":project.revision})
+    try: spec=get_spec(body.model_id,body.model_version)
+    except ValueError as exc: raise HTTPException(422,detail={"code":"unknown_model","message":str(exc)}) from exc
+    if not installed(spec): raise HTTPException(409,detail={"code":"model_not_installed","message":"Install and verify the selected model first"})
+    known={str(p.get("id")) for p in project.workspace.get("poems",[])}
+    if len(set(body.poem_ids)) != len(body.poem_ids) or any(i not in known for i in body.poem_ids):
+        raise HTTPException(422,detail={"code":"invalid_poem_selection","message":"Poem ids must be unique and belong to this project"})
+    selected_lines={str(line.get("id")) for poem in project.workspace.get("poems",[]) if str(poem.get("id")) in body.poem_ids for line in poem.get("lines",[])}
+    if body.line_ids is not None and (len(set(body.line_ids))!=len(body.line_ids) or any(i not in selected_lines for i in body.line_ids)):
+        raise HTTPException(422,detail={"code":"invalid_line_selection","message":"Line ids must be unique and belong to selected poems"})
+    job=Job(project_id=project_id,type="stress_analysis",result={"poem_ids":body.poem_ids,
+      "line_ids":body.line_ids,"workspace_revision":body.revision,"model_id":spec.id,"model_version":spec.version,"processed_poems":0,
+      "processed_lines":0,"uncertain_words":0})
+    db.add(job);db.commit();db.refresh(job);return job
