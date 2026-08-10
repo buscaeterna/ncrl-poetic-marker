@@ -41,7 +41,7 @@ def test_health_capabilities_and_error_openapi():
     assert client.get("/api/v1/ready").status_code == 200
     assert client.get("/api/v1/capabilities").json() == {
         "workspace": True, "jobs": True, "pdf": True, "ocr": True,
-        "stress": True, "meter": False, "local_model": False,
+        "stress": True, "meter": True, "local_model": False,
     }
     schema = client.get("/api/openapi.json").json()
     error_schema = schema["components"]["schemas"]["ErrorEnvelope"]

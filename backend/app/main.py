@@ -18,6 +18,8 @@ from .schemas import (CapabilitiesResponse, ErrorEnvelope, HealthResponse, JobCr
                       JobResponse, ProjectCreate, ProjectDetail, ProjectSummary, ProjectUpdate)
 from .schemas import SourcePageUpdate
 from .schemas import StressJobCreate
+from .schemas import MeterJobCreate
+from .meter import VERSION as METER_VERSION
 from .settings import settings
 from .model import MANIFEST, claim_install, fail_install, get_spec, install, installed, remove, state, verify_file
 
@@ -57,7 +59,7 @@ def ready(db: Session = Depends(database)) -> HealthResponse:
 
 @app.get("/api/v1/capabilities", response_model=CapabilitiesResponse, tags=["system"])
 def capabilities() -> CapabilitiesResponse:
-    return CapabilitiesResponse(stress=True, local_model=any(installed(spec) for spec in MANIFEST.values()))
+    return CapabilitiesResponse(stress=True, meter=True, local_model=any(installed(spec) for spec in MANIFEST.values()))
 
 
 def missing(kind: str = "project") -> HTTPException:
@@ -337,3 +339,28 @@ def create_stress_job(project_id: UUID, body: StressJobCreate, db: Session = Dep
       "line_ids":body.line_ids,"workspace_revision":body.revision,"model_id":spec.id,"model_version":spec.version,"processed_poems":0,
       "processed_lines":0,"uncertain_words":0})
     db.add(job);db.commit();db.refresh(job);return job
+
+@app.get("/api/v1/meter", tags=["meter"])
+def meter_available():
+    return {"available": True, "analyzer_version": METER_VERSION, "network": False}
+
+@app.post("/api/v1/projects/{project_id}/meter/jobs", status_code=202, tags=["meter"])
+def create_meter_job(project_id: UUID, body: MeterJobCreate, db: Session = Depends(database)):
+    project = db.get(Project, project_id)
+    if not project: raise missing()
+    if project.revision != body.revision:
+        raise HTTPException(409, detail={"code":"revision_conflict","message":"Project has a newer revision","current_revision":project.revision})
+    if body.analyzer_version != METER_VERSION:
+        raise HTTPException(422, detail={"code":"analyzer_version_mismatch","message":"Unsupported analyzer version"})
+    known = {str(p.get("id")): p for p in project.workspace.get("poems", [])}
+    if len(set(body.poem_ids)) != len(body.poem_ids) or any(i not in known for i in body.poem_ids):
+        raise HTTPException(422, detail={"code":"invalid_poem_selection","message":"Poem ids must be unique and belong to this project"})
+    line_ids = {str(line.get("id")) for pid in body.poem_ids for line in known[pid].get("lines", [])}
+    if body.line_ids is not None and (len(set(body.line_ids)) != len(body.line_ids) or any(i not in line_ids for i in body.line_ids)):
+        raise HTTPException(422, detail={"code":"invalid_line_selection","message":"Line ids must belong to selected poems"})
+    active = db.scalar(select(Job).where(Job.project_id == project_id, Job.type == "meter_analysis", Job.status.in_([JobStatus.queued, JobStatus.running, JobStatus.cancel_requested])))
+    if active: raise HTTPException(409, detail={"code":"meter_job_active","message":"A meter job is already active"})
+    job = Job(project_id=project_id, type="meter_analysis", result={"poem_ids":body.poem_ids,"line_ids":body.line_ids,
+        "workspace_revision":body.revision,"analyzer_version":METER_VERSION,"processed_poems":0,"processed_lines":0,
+        "ambiguous_lines":0,"insufficient_lines":0})
+    db.add(job); db.commit(); db.refresh(job); return job

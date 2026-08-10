@@ -10,6 +10,7 @@ from .models import Job, JobStatus, Project, SourceDocument, SourcePage, utcnow
 from .pdf import extract_page, safe_path
 from .settings import settings
 from .stress import analyse_line
+from .meter import analyse_poem
 from .model import get_spec, load_provider
 
 stopping = False
@@ -83,6 +84,9 @@ def process_one() -> bool:
             if job.type == "stress_analysis":
                 process_stress(job.id)
                 return True
+            if job.type == "meter_analysis":
+                process_meter(job.id)
+                return True
             if job.type != "workspace_summary": raise ValueError(f"unsupported job type: {job.type}")
             project = db.get(Project, job.project_id)
             if project is None:
@@ -95,6 +99,43 @@ def process_one() -> bool:
         if job:
             job.finished_at = job.updated_at = utcnow()
     return True
+
+def process_meter(job_id) -> None:
+    with SessionLocal() as db:
+        job=db.get(Job,job_id); project=db.get(Project,job.project_id); payload=dict(job.result or {})
+        if not project or project.revision != payload.get("workspace_revision"): raise ValueError("workspace revision changed before meter analysis")
+        selected=set(payload["poem_ids"]); selected_lines=set(payload.get("line_ids") or [])
+        work=[(str(p.get("id")), [{**line} for line in p.get("lines",[]) if not selected_lines or str(line.get("id")) in selected_lines])
+              for p in project.workspace.get("poems",[]) if str(p.get("id")) in selected]
+    results={}; processed=ambiguous=insufficient=0
+    for poem_id, lines in work:
+        poem_result=analyse_poem(poem_id, lines)
+        for suggestion in poem_result["lineSuggestions"]:
+            with SessionLocal.begin() as db:
+                job=db.get(Job,job_id)
+                if stopping or job.status==JobStatus.cancel_requested:
+                    job.status=JobStatus.cancelled;job.finished_at=utcnow();return
+            processed += 1; ambiguous += suggestion["quality"]=="ambiguous"; insufficient += suggestion["quality"]=="insufficient"
+        results[poem_id]=poem_result
+        with SessionLocal.begin() as db:
+            job=db.get(Job,job_id);job.progress=processed/max(1,sum(len(lines) for _,lines in work));job.updated_at=utcnow()
+            job.result={**payload,"processed_poems":len(results),"processed_lines":processed,"ambiguous_lines":ambiguous,"insufficient_lines":insufficient}
+    with SessionLocal.begin() as db:
+        job=db.get(Job,job_id);project=db.get(Project,job.project_id)
+        if project.revision != payload["workspace_revision"]:
+            job.status=JobStatus.failed;job.error="workspace revision changed during meter analysis";job.finished_at=utcnow();return
+        workspace=dict(project.workspace); poems=[]
+        for poem in workspace.get("poems",[]):
+            poem=dict(poem); result=results.get(str(poem.get("id")))
+            if result:
+                by_id={r["lineId"]:r for r in result["lineSuggestions"]}
+                poem["lines"]=[{**line,"meterSuggestion":by_id.get(str(line.get("id")),line.get("meterSuggestion"))} for line in poem.get("lines",[])]
+                poem["meterWorkSuggestion"]={k:v for k,v in result.items() if k!="lineSuggestions"}
+            poems.append(poem)
+        workspace["poems"]=poems;project.workspace=workspace;project.revision+=1
+        job.status=JobStatus.succeeded;job.progress=1;job.finished_at=job.updated_at=utcnow()
+        job.result={**payload,"processed_poems":len(results),"processed_lines":processed,"ambiguous_lines":ambiguous,
+                    "insufficient_lines":insufficient,"project_revision":project.revision,"result_ref":f"project:{project.id}:revision:{project.revision}"}
 
 def process_stress(job_id) -> None:
     with SessionLocal() as db:

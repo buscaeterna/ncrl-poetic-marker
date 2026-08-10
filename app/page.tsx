@@ -12,6 +12,7 @@ import { RuntimeIndicator } from "./runtime-indicator";
 import { ProjectsDialog, type ServerProject } from "./projects-dialog";
 import { effectiveMetadata, metadataFromFields, restoreOriginalValue, setManualValue, type AutomaticMetadata, type DocumentMode, type EditorMetadata, type MetadataKey } from "./editor-metadata";
 import { StressDialog } from "./stress-dialog";
+import { MeterDialog } from "./meter-dialog";
 
 type Clause = "м" | "ж" | "д" | "г";
 type Meter = "" | "Я" | "Х" | "Д" | "Ан" | "Аф" | "Дк" | "Тк" | "Ак" | "О";
@@ -310,6 +311,7 @@ export default function Home() {
   const [serverProject, setServerProject] = useState<ServerProject | null>(null);
   const [pdfOpen, setPdfOpen] = useState(false);
   const [stressOpen, setStressOpen] = useState(false);
+  const [meterOpen, setMeterOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const meta = useMemo(() => deriveMetadata(doc), [doc]);
   const issues = useMemo(() => validate(doc, meta), [doc, meta]);
@@ -507,6 +509,7 @@ export default function Home() {
           <button className="button secondary" onClick={() => fileRef.current?.click()}><Icon>↥</Icon>Импорт</button>
           {process.env.NEXT_PUBLIC_RUNTIME_MODE !== "static" && <button className="button secondary" onClick={() => setPdfOpen(true)}>Импорт PDF</button>}
           {process.env.NEXT_PUBLIC_RUNTIME_MODE !== "static" && <button className="button secondary" disabled={!serverProject} onClick={() => setStressOpen(true)}>Автоматические ударения</button>}
+          {process.env.NEXT_PUBLIC_RUNTIME_MODE !== "static" && <button className="button secondary" disabled={!serverProject} onClick={() => setMeterOpen(true)}>Метрический анализ</button>}
           <button className="button primary" onClick={download}><Icon>↓</Icon>Скачать HTML</button>
         </div>
       </header>
@@ -647,6 +650,7 @@ export default function Home() {
         }
       }} />}
       {stressOpen && serverProject && <StressDialog project={serverProject} workspace={{corpora, poems, activeId, queue}} onProject={setServerProject} onWorkspace={(workspace) => { setCorpora(workspace.corpora); setPoems(workspace.poems); setActiveId(workspace.activeId); setQueue(workspace.queue); const active=workspace.poems.find((poem)=>poem.id===workspace.activeId); if(active)setDoc(poemToDocument(active)); saveWorkspace(workspace); }} onClose={() => setStressOpen(false)} />}
+      {meterOpen && serverProject && <MeterDialog project={serverProject} workspace={{corpora, poems, activeId, queue}} onProject={setServerProject} onWorkspace={(workspace) => { setCorpora(workspace.corpora); setPoems(workspace.poems); setActiveId(workspace.activeId); setQueue(workspace.queue); const active=workspace.poems.find((poem)=>poem.id===workspace.activeId); if(active)setDoc(poemToDocument(active)); saveWorkspace(workspace); }} onClose={() => setMeterOpen(false)} />}
     </main>
   );
 }

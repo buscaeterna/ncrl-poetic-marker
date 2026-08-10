@@ -13,7 +13,11 @@ export type CorpusLine = {
   note: string;
   /** A machine result is review data only; exporters continue to use `text`. */
   stressSuggestion?: StressSuggestion;
+  meterSuggestion?: MeterSuggestion;
 };
+
+export type MeterCandidate = { meter:string; feetOrIctuses:number; ictusPositions:number[]; anacrusis:number; ictusOmissions:number[]; weakStresses:number[]; violations:Array<Record<string,unknown>>; regular:boolean };
+export type MeterSuggestion = { sourceText:string; sourceHash:string; analyzerVersion:string; syllables:Array<{index:number;text:string;start:number;end:number;wordIndex:number;stress:"stressed"|"unstressed"|"unknown"}>; words:Array<Record<string,unknown>>; accentSequence:string; candidates:MeterCandidate[]; selected:MeterCandidate|null; clause:"м"|"ж"|"д"|"г"|null; unknownWords:Array<Record<string,unknown>>; explanation:string; quality:"exact"|"probable"|"ambiguous"|"insufficient"; state:"pending"|"accepted"|"rejected"|"stale"; analysedAt:string; warnings:string[] };
 
 export type StressWord = {
   original: string; normalized: string; position: number | null; confidence: number;
@@ -70,9 +74,19 @@ export function acceptStressWord(line: CorpusLine, wordIndex: number, position?:
 
 export function editLineText(line: CorpusLine, text: string): CorpusLine {
   const suggestion = line.stressSuggestion;
+  const meterSuggestion=line.meterSuggestion;
   return { ...line, text, stressSuggestion: suggestion && suggestion.sourceText !== text
-    ? { ...suggestion, state: "stale" } : suggestion };
+    ? { ...suggestion, state: "stale" } : suggestion, meterSuggestion: meterSuggestion && meterSuggestion.sourceText !== text ? {...meterSuggestion,state:"stale"} : meterSuggestion };
 }
+
+/** Explicit application; a suggestion never affects export while pending. */
+export function acceptMeterSuggestion(line:CorpusLine,candidate=line.meterSuggestion?.selected):CorpusLine {
+  const suggestion=line.meterSuggestion;
+  if(!suggestion||!candidate||suggestion.state==="stale"||suggestion.sourceHash!==sha256Text(line.text))return line;
+  return {...line,meter:candidate.meter,feet:candidate.feetOrIctuses,clause:suggestion.clause??line.clause,
+    scheme:suggestion.accentSequence,meterSuggestion:{...suggestion,selected:candidate,state:"accepted"}};
+}
+export function rejectMeterSuggestion(line:CorpusLine):CorpusLine {return line.meterSuggestion?{...line,meterSuggestion:{...line.meterSuggestion,state:"rejected"}}:line}
 
 export type StructuralElement = {
   kind: "H1" | "H2" | "H3" | "date" | "epigraf" | "verse";
