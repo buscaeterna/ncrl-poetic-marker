@@ -135,6 +135,11 @@ export function replacePoemLines(poem:ImportedPoem,lines:CorpusLine[]):ImportedP
   const sourceChanged=poem.lines.length!==lines.length||poem.lines.some((line,index)=>line.id!==lines[index]?.id||line.text!==lines[index]?.text);
   const updated={...poem,lines};return sourceChanged?invalidateMeterWorkSuggestion(updated):updated;
 }
+export function updatePoemFromEditor(poem:ImportedPoem,lines:CorpusLine[],patch:Partial<Omit<ImportedPoem,"lines">>):ImportedPoem {
+  const interpretationChanged=lines.some(line=>{const previous=poem.lines.find(item=>item.id===line.id);return !!previous&&(previous.meter!==line.meter||previous.feet!==line.feet||previous.clause!==line.clause)});
+  const withLines=replacePoemLines(poem,lines),updated={...withLines,...patch,lines};
+  return interpretationChanged?invalidateMeterWorkSuggestion(updated):updated;
+}
 
 export type ImportedCorpus = {
   id: string;

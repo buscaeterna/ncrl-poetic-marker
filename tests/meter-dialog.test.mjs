@@ -1,6 +1,6 @@
 import test from "node:test";import assert from "node:assert/strict";
 import {applyWorkMetadata,bulkAcceptExact,canApplyWorkMetadata,canBulkAcceptMeter,invalidateWorkSuggestion,poemMeterSignature,recoverMeterJob,restoreWorkMetadata,updateLineInterpretation,validateManualLine} from "../app/meter-dialog.tsx";
-import {acceptMeterSuggestion,exportCorpus,exportPoem,METER_ANALYZER_VERSION,replacePoemLines,restoreImportedAnnotation,sha256Text} from "../app/corpus.ts";
+import {acceptMeterSuggestion,exportCorpus,exportPoem,METER_ANALYZER_VERSION,replacePoemLines,restoreImportedAnnotation,sha256Text,updatePoemFromEditor} from "../app/corpus.ts";
 test("meter dialog restores active and terminal job states",()=>{
  for(const status of ["running","succeeded","cancelled","failed"]){const jobs=[{id:"x",type:"meter_analysis",status,progress:0,error:null}];assert.equal(recoverMeterJob(jobs).status,status)}
  assert.equal(recoverMeterJob([{id:"old",type:"meter_analysis",status:"succeeded",progress:1,error:null},{id:"new",type:"meter_analysis",status:"running",progress:0,error:null}]).id,"new");
@@ -58,4 +58,13 @@ test("raw editor metadata falls back to computed fields and manual still wins",(
  const html=exportPoem(poem);assert.match(html,/@метр Я/);assert.match(html,/@формула Я4м/);assert.match(html,/@стопность 4/);
  assert.match(exportCorpus({id:"c",name:"c",encoding:"utf-8",order:0,eol:"\n"},[poem]),/@формула Я4м/);
  const manual={...poem,editorMetadata:{...poem.editorMetadata,meter:{manual:"Х"}}};assert.match(exportPoem(manual),/@метр Х/);
+});
+test("page editor integration compares old lines before applying document updates",()=>{
+ const line={id:"l",text:"строка",meter:"Я",feet:4,clause:"м",scheme:"",starred:false,breakBefore:false,note:""},work={sourceSignature:"old",state:"pending",warnings:[],metadataSuggestion:{meter:"Я",formula:"Я4м",stopness:"4",sourceSignature:"old",state:"pending",explanation:""}},poem=completePoem(line,{meterWorkSuggestion:work});
+ const patch={title:"Новое название",dirty:true,modified:true};
+ assert.equal(updatePoemFromEditor(poem,[{...line,text:"правка"}],patch).meterWorkSuggestion.state,"stale");
+ assert.equal(updatePoemFromEditor(poem,[line,{...line,id:"new"}],patch).meterWorkSuggestion.state,"stale");
+ assert.equal(updatePoemFromEditor(poem,[],patch).meterWorkSuggestion.state,"stale");
+ const metadataOnly=updatePoemFromEditor(poem,[line],patch);assert.equal(metadataOnly.meterWorkSuggestion.state,"pending");assert.equal(metadataOnly.title,"Новое название");
+ const interpretation=updatePoemFromEditor(poem,[{...line,feet:5}],patch);assert.equal(interpretation.meterWorkSuggestion.state,"stale");
 });

@@ -1,7 +1,7 @@
 "use client";
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
-import { decodeCorpus, editLineText, encodeCorpus, exportCorpusBytes, exportPoem, importCorpusBytes, invalidateMeterWorkSuggestion, replacePoemLines, splitCorpus, type ImportedCorpus, type ImportedPoem, type LineAnnotation, type MeterSuggestion, type ProcessingStatus, type StressSuggestion } from "./corpus";
+import { decodeCorpus, editLineText, encodeCorpus, exportCorpusBytes, exportPoem, importCorpusBytes, splitCorpus, updatePoemFromEditor, type ImportedCorpus, type ImportedPoem, type LineAnnotation, type MeterSuggestion, type ProcessingStatus, type StressSuggestion } from "./corpus";
 import { loadWorkspace, saveWorkspace } from "./corpus-db";
 import { RawImportDialog } from "./raw-import-dialog";
 import { PdfImportDialog } from "./pdf-import-dialog";
@@ -368,16 +368,13 @@ export default function Home() {
         const editorMetadata = { ...next.metadata, mode: next.mode, effects: next.effects, strophe: next.strophe, graphicStrophe: next.graphicStrophe,
           rhyme: next.rhymeScheme ? `${next.rhyme} | ${next.rhymeScheme}` : next.rhyme };
         const effective = effectiveMetadata(editorMetadata, deriveAutomaticMetadata(next));
-        const updated = {
-          ...poem, author: next.author, title: next.title, date: next.date, cycle: next.cycle,
-          lines: next.lines, dirty: true, modified: true, editorMetadata,
+        return updatePoemFromEditor(poem,next.lines,{
+          author: next.author, title: next.title, date: next.date, cycle: next.cycle,
+          dirty: true, modified: true, editorMetadata,
           fields: { ...poem.fields, "метр": effective.meter, "формула": effective.formula, "стопность": effective.stopness,
             "клаузула": effective.clausula, "рифма": effective.rhyme, "доп": effective.effects.join(", "),
             "строфика": effective.strophe, "гр_строфика": effective.graphicStrophe },
-        };
-        const interpretationChanged=next.lines.some(line=>{const previous=poem.lines.find(item=>item.id===line.id);return previous&&(previous.meter!==line.meter||previous.feet!==line.feet||previous.clause!==line.clause)});
-        const withLines=replacePoemLines(updated,next.lines);
-        return interpretationChanged?invalidateMeterWorkSuggestion(withLines):withLines;
+        });
       }));
       return next;
     });
