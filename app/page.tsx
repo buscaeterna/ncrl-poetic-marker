@@ -12,7 +12,7 @@ import { RuntimeIndicator } from "./runtime-indicator";
 import { ProjectsDialog, type ServerProject } from "./projects-dialog";
 import { effectiveMetadata, metadataFromFields, restoreOriginalValue, setManualValue, type AutomaticMetadata, type DocumentMode, type EditorMetadata, type MetadataKey } from "./editor-metadata";
 import { StressDialog } from "./stress-dialog";
-import { MeterDialog } from "./meter-dialog";
+import { invalidateWorkSuggestion, MeterDialog } from "./meter-dialog";
 
 type Clause = "м" | "ж" | "д" | "г";
 type Meter = "" | "Я" | "Х" | "Д" | "Ан" | "Аф" | "Дк" | "Тк" | "Ак" | "О";
@@ -368,13 +368,15 @@ export default function Home() {
         const editorMetadata = { ...next.metadata, mode: next.mode, effects: next.effects, strophe: next.strophe, graphicStrophe: next.graphicStrophe,
           rhyme: next.rhymeScheme ? `${next.rhyme} | ${next.rhymeScheme}` : next.rhyme };
         const effective = effectiveMetadata(editorMetadata, deriveAutomaticMetadata(next));
-        return {
+        const updated = {
           ...poem, author: next.author, title: next.title, date: next.date, cycle: next.cycle,
           lines: next.lines, dirty: true, modified: true, editorMetadata,
           fields: { ...poem.fields, "метр": effective.meter, "формула": effective.formula, "стопность": effective.stopness,
             "клаузула": effective.clausula, "рифма": effective.rhyme, "доп": effective.effects.join(", "),
             "строфика": effective.strophe, "гр_строфика": effective.graphicStrophe },
         };
+        const interpretationChanged=next.lines.some(line=>{const previous=poem.lines.find(item=>item.id===line.id);return previous&&(previous.meter!==line.meter||previous.feet!==line.feet||previous.clause!==line.clause)});
+        return interpretationChanged?invalidateWorkSuggestion(updated):updated;
       }));
       return next;
     });

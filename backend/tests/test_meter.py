@@ -81,3 +81,12 @@ def test_no_numeric_polymetry_threshold_and_stale_does_not_influence_summary():
     assert poem["dominantMeter"]=="Тк" and poem["heterometryPossible"] is None
     assert poem["distribution"]=={"Тк":1} and poem["excludedLineIds"]==["2"]
     assert poem["metadataSuggestion"]["meter"]==""
+
+def test_equal_confirmed_meters_have_no_dominant_or_context_resolution():
+    first=line_result("1","а` а`")
+    second=line_result("2","а` ба ба ба ба ба` ба`")
+    ambiguous=line_result("3","ма`ма мы`ла ра`му")
+    poem=summarise_poem("p",[first,second,ambiguous])
+    assert poem["dominantMeter"] is None and poem["metadataSuggestion"]["meter"]==""
+    assert poem["lineSuggestions"][2]["quality"]=="ambiguous"
+    assert any("равную частоту" in warning["message"] for warning in poem["warnings"])

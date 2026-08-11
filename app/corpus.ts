@@ -1,3 +1,4 @@
+import { effectiveMetadata } from "./editor-metadata";
 export type SourceEncoding = "utf-8" | "windows-1251";
 export type ProcessingStatus = "unprocessed" | "processing" | "ready" | "review" | "error";
 
@@ -239,7 +240,8 @@ export function importCorpusBytes(bytes: ArrayBuffer | Uint8Array, name: string,
 export function exportPoem(poem: ImportedPoem, renderedLines?: CorpusLine[]) {
   if (!poem.modified) return poem.originalHtml;
   const lines = renderedLines ?? poem.lines;
-  const fields = { ...poem.fields, author: poem.author, title: poem.title, date: poem.date, "цикл": poem.cycle };
+  const accepted=poem.editorMetadata?effectiveMetadata(poem.editorMetadata,{meter:"",formula:"",stopness:""}):null;
+  const fields = { ...poem.fields, ...(accepted?{"метр":accepted.meter,"формула":accepted.formula,"стопность":accepted.stopness,"клаузула":accepted.clausula}:{}), author: poem.author, title: poem.title, date: poem.date, "цикл": poem.cycle };
   const head = Object.entries(fields).filter(([key]) => ["author", "title", "date"].includes(key))
     .map(([key, value]) => `<meta name='${esc(key)}' content='${esc(value)}'>`);
   const authorTitle = poem.author.replace(/^(.+?)\s+((?:[А-ЯЁA-Z]\.?\s*){1,3})$/u, (_all, surname, initials) => `${initials.replace(/\s/g, "")} ${surname}`);

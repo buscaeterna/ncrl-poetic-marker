@@ -102,7 +102,10 @@ def summarise_poem(poem_id: str, results: list[dict]) -> dict:
     # candidate resolved by an earlier poem context cannot bootstrap that context.
     basis = [r for r in current if r.get("selected") and r.get("quality") in {"exact", "probable"} and not r.get("contextResolved")]
     initial = [r["selected"]["meter"] for r in basis]
-    dominant = Counter(initial).most_common(1)[0][0] if initial else None
+    basis_counts = Counter(initial)
+    leaders = basis_counts.most_common()
+    tied = bool(leaders and len([count for _, count in leaders if count == leaders[0][1]]) > 1)
+    dominant = leaders[0][0] if leaders and not tied else None
     for result in current:
         matching = [c for c in result["candidates"] if c["meter"] == dominant]
         if dominant and result["quality"] == "ambiguous" and matching:
@@ -113,6 +116,7 @@ def summarise_poem(poem_id: str, results: list[dict]) -> dict:
     warnings = [{"rule":"R011","message":"Применён приоритет регулярных интерпретаций."}]
     if excluded: warnings.append({"rule":"manual_review","message":"Устаревшие, отклонённые или несовместимые предложения исключены из сводки."})
     if not basis: warnings.append({"rule":"manual_review","message":"Нет независимых exact/probable строк для определения доминирующего метра."})
+    if tied: warnings.append({"rule":"manual_review","message":"Подтверждённые метры имеют равную частоту; доминирующий метр не выбран."})
     outliers = [r for r in current if dominant and r.get("selected") and r["quality"] != "ambiguous" and r["selected"]["meter"] != dominant]
     if dominant == "Дк" and any(r.get("selected") and r["selected"]["meter"] == "Ак" for r in current): warnings.append({"rule":"R012","message":"Ак внутри дольникового каркаса следует повторно проверить как Дк."})
     if any(r.get("selected") and (r["selected"]["anacrusis"] > 2 or any(v.get("kind")=="irregular_intervals" for v in r["selected"]["violations"])) for r in current): warnings.append({"rule":"R013","message":"Анакруса или длинный интервал не создают дополнительный икт автоматически."})
