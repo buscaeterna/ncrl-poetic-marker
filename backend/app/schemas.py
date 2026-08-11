@@ -29,7 +29,7 @@ class StressJobCreate(BaseModel):
 
 class MeterJobCreate(BaseModel):
     poem_ids: list[str] = Field(min_length=1)
-    line_ids: list[str] | None = None
+    line_ids: list[str] | None = Field(default=None, min_length=1)
     revision: int = Field(ge=1)
     analyzer_version: str
 

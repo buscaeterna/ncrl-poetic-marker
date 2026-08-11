@@ -1,7 +1,7 @@
 "use client";
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
-import { decodeCorpus, encodeCorpus, exportCorpusBytes, exportPoem, importCorpusBytes, splitCorpus, type ImportedCorpus, type ImportedPoem, type ProcessingStatus, type StressSuggestion } from "./corpus";
+import { decodeCorpus, editLineText, encodeCorpus, exportCorpusBytes, exportPoem, importCorpusBytes, splitCorpus, type ImportedCorpus, type ImportedPoem, type LineAnnotation, type MeterSuggestion, type ProcessingStatus, type StressSuggestion } from "./corpus";
 import { loadWorkspace, saveWorkspace } from "./corpus-db";
 import { RawImportDialog } from "./raw-import-dialog";
 import { PdfImportDialog } from "./pdf-import-dialog";
@@ -28,6 +28,9 @@ type VerseLine = {
   starred: boolean;
   note: string;
   stressSuggestion?: StressSuggestion;
+  meterSuggestion?: MeterSuggestion;
+  importedAnnotation?: LineAnnotation;
+  annotationSource?: "imported"|"manual"|"accepted";
 };
 
 type DocumentState = {
@@ -378,7 +381,7 @@ export default function Home() {
   };
   const patchDoc = (value: Partial<DocumentState>) => updateDoc((current) => ({ ...current, ...value }));
   const patchLine = (index: number, value: Partial<VerseLine>) => updateDoc((current) => ({
-    ...current, lines: current.lines.map((line, i) => i === index ? (value.text !== undefined ? { ...line, ...value, stressSuggestion: line.stressSuggestion && line.stressSuggestion.sourceText !== value.text ? { ...line.stressSuggestion, state: "stale" as const } : line.stressSuggestion } : { ...line, ...value }) : line),
+    ...current, lines: current.lines.map((line, i) => i === index ? (value.text !== undefined ? editLineText(line,value.text) as VerseLine : { ...line, ...value, annotationSource: (value.meter!==undefined||value.feet!==undefined||value.clause!==undefined||value.scheme!==undefined)?"manual":line.annotationSource }) : line),
   }));
   const patchMetadata = (key: MetadataKey, value: string) => updateDoc((current) => ({
     ...current, metadata: setManualValue(current.metadata, key, value),

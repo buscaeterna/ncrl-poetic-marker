@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { decodeCorpus, encodeCorpus, exportCorpus, exportCorpusBytes, exportPoem, importCorpusBytes, parsePoem, splitCorpus } from "../app/corpus.ts";
+import { decodeCorpus, encodeCorpus, exportCorpus, exportCorpusBytes, exportPoem, importCorpusBytes, parsePoem, restoreImportedAnnotation, splitCorpus } from "../app/corpus.ts";
 
 const encoder = new TextEncoder();
 const fixture = `<<<--- Gorenko-001.htm>>>
@@ -199,4 +199,19 @@ test("UTF-8 and Windows-1251 corpus exports retain encoding, content, markers, a
 
 test("Windows-1251 encoding rejects unrepresentable edits with actionable guidance", () => {
   assert.throws(() => encodeCorpus("текст 😀", "windows-1251"), /UTF-8/);
+});
+
+test("line annotations are imported, retained on sibling edits, and restorable", () => {
+  const html="<html><head><meta name='title' content='T'></head><body><p class=verse><#Я4м>моро`з<br><#Х*3ж 1*1*>пого`да</p></body></html>";
+  const poem=parsePoem(html,"x.htm",0,"c");
+  assert.deepEqual(poem.lines.map(({meter,feet,clause,starred,scheme})=>({meter,feet,clause,starred,scheme})),[
+    {meter:"Я",feet:4,clause:"м",starred:false,scheme:""},{meter:"Х",feet:3,clause:"ж",starred:true,scheme:"1*1*"},
+  ]);
+  assert.equal(poem.lines[0].annotationSource,"imported");
+  const changed={...poem,modified:true,lines:[{...poem.lines[0],text:"мороз"},poem.lines[1]]};
+  assert.match(exportPoem(changed),/<#Х\*3ж 1\*1\*>пого`да/);
+  const overridden={...poem.lines[0],meter:"Д",feet:2,annotationSource:"manual"};
+  assert.deepEqual((({meter,feet,clause,scheme,starred})=>({meter,feet,clause,scheme,starred}))(restoreImportedAnnotation(overridden)),
+    {meter:"Я",feet:4,clause:"м",scheme:"",starred:false});
+  assert.equal(exportPoem(poem),html);
 });

@@ -6,13 +6,12 @@ after a vowel and ``ё`` are the only evidence of word stress.
 from __future__ import annotations
 
 import hashlib
-import re
 from collections import Counter
 from datetime import datetime, timezone
 
 VERSION = "meter-1.0.0"
-VOWELS = set("аеёиоуыэюяАЕЁИОУЫЭЮЯѣѢ")
-WORD_RE = re.compile(r"[А-Яа-яЁёІіѢѣ]+(?:`|-[А-Яа-яЁёІіѢѣ]+)*", re.U)
+from .stress import VOWELS as STRESS_VOWELS, WORD as WORD_RE
+VOWELS = set(STRESS_VOWELS)
 FEET = (("Х", 2, 0), ("Я", 2, 1), ("Д", 3, 0), ("Аф", 3, 1), ("Ан", 3, 2))
 CLAUSES = ("м", "ж", "д", "г")
 
@@ -69,12 +68,14 @@ def analyse_line(text: str) -> dict:
     if stresses and not regular and not tonic:
         tonic.append({"meter": "Ак", "feetOrIctuses": len(stresses), "ictusPositions": stresses,
                       "anacrusis": stresses[0], "ictusOmissions": [], "weakStresses": [],
-                      "violations": [{"kind": "irregular_intervals", "intervals": intervals}], "regular": True})
+                      "violations": [{"kind": "irregular_intervals", "intervals": intervals}], "regular": False})
     ranked = regular + [c for c in tonic if c["meter"] == "Дк"] + [c for c in tonic if c["meter"] == "Тк"] + [c for c in tonic if c["meter"] == "Ак"]
     if not ranked: ranked = sorted(candidates, key=lambda c: (len(c["violations"]), [f[0] for f in FEET].index(c["meter"])))[:3]
     last = stresses[-1] if stresses else None
     clause = CLAUSES[min(3, len(syllables) - last - 1)] if last is not None else None
-    quality = "insufficient" if not syllables or unknown_words or not stresses else ("exact" if len(ranked) == 1 and ranked[0]["regular"] else "ambiguous" if len(ranked) > 1 else "probable")
+    quality = ("insufficient" if not syllables or unknown_words or not stresses else
+               "ambiguous" if len(ranked) > 1 else
+               "exact" if not ranked[0]["violations"] else "probable")
     selected = ranked[0] if quality != "insufficient" else None
     explanation = ("Недостаточно подтверждённых ударений; проверьте: " + ", ".join(w["text"] for w in unknown_words)) if quality == "insufficient" else f"Выбран {selected['meter']} по приоритету R011; наблюдаемые нарушения: {len(selected['violations'])}."
     now = datetime.now(timezone.utc).isoformat()
@@ -85,20 +86,40 @@ def analyse_line(text: str) -> dict:
             "warnings": ["manual_review"] if quality == "insufficient" else []}
 
 
-def analyse_poem(poem_id: str, lines: list[dict]) -> dict:
-    results = [{"lineId": str(line.get("id")), **analyse_line(line.get("text", ""))} for line in lines]
-    meters = Counter(r["selected"]["meter"] for r in results if r["selected"])
+def source_signature(results: list[dict]) -> str:
+    return hashlib.sha256("\n".join(f"{r['lineId']}:{r['sourceHash']}" for r in results).encode()).hexdigest()
+
+def summarise_poem(poem_id: str, results: list[dict]) -> dict:
+    """Use a stable line majority only as explainable context, never as proof."""
+    initial = [r["selected"]["meter"] for r in results if r.get("selected") and r["quality"] != "insufficient"]
+    dominant = Counter(initial).most_common(1)[0][0] if initial else None
+    for result in results:
+        matching = [c for c in result["candidates"] if c["meter"] == dominant]
+        if result["quality"] == "ambiguous" and matching:
+            result["selected"] = matching[0]; result["quality"] = "probable"
+            result["explanation"] += f" Контекст произведения поддерживает {dominant}; требуется проверка."
+    meters = Counter(r["selected"]["meter"] for r in results if r.get("selected"))
     dominant = meters.most_common(1)[0][0] if meters else None
-    warnings = ["R011"]
-    if dominant == "Дк" and any(r["selected"] and r["selected"]["meter"] == "Ак" for r in results): warnings.append("R012")
-    if len(meters) > 1: warnings += ["R014", "R015", "R016"]
-    if any("¦" in r["sourceText"] for r in results): warnings.append("R017")
-    signature = hashlib.sha256("\n".join(f"{r['lineId']}:{r['sourceHash']}" for r in results).encode()).hexdigest()
+    warnings = [{"rule":"R011","message":"Применён приоритет регулярных интерпретаций."}]
+    outliers = [r for r in results if r.get("selected") and r["selected"]["meter"] != dominant]
+    if dominant == "Дк" and any(r["selected"] and r["selected"]["meter"] == "Ак" for r in results): warnings.append({"rule":"R012","message":"Ак внутри дольникового каркаса следует повторно проверить как Дк."})
+    if any(r.get("selected") and (r["selected"]["anacrusis"] > 2 or any(v.get("kind")=="irregular_intervals" for v in r["selected"]["violations"])) for r in results): warnings.append({"rule":"R013","message":"Анакруса или длинный интервал не создают дополнительный икт автоматически."})
+    if outliers and len(outliers) < max(2, len(results)//3): warnings += [{"rule":"R014","message":"Единичное отклонение не разрушает устойчивый каркас."},{"rule":"R015","message":"Не назначать Вл по единичному отклонению."}]
+    if len(outliers) >= max(2, len(results)//3): warnings.append({"rule":"R016","message":"Самостоятельность частей не формализована; требуется manual_review."})
+    if any("¦" in r["sourceText"] for r in results): warnings.append({"rule":"R017","message":"Виртуальное объединение графических фрагментов требует manual_review."})
+    signature = source_signature(results)
     alternatives = [m for m, _ in meters.most_common() if m != dominant]
     exact_feet = [r["selected"]["feetOrIctuses"] for r in results if r["selected"] and r["selected"]["meter"] == dominant]
-    stopness = str(Counter(exact_feet).most_common(1)[0][0]) if exact_feet else ""
-    formula = "; ".join(f"{m}{f}{r['clause'] or '?'}" for r in results if (m := r["selected"]["meter"] if r["selected"] else None) for f in [r["selected"]["feetOrIctuses"]])
+    uniform_feet = len(set(exact_feet)) == 1
+    clauses = sorted({r["clause"] for r in results if r.get("selected") and r["selected"]["meter"] == dominant and r["clause"]})
+    formalised = bool(dominant and not outliers and uniform_feet and all(r["quality"] in {"exact","probable"} for r in results))
+    stopness = str(exact_feet[0]) if formalised and exact_feet else ""
+    formula = f"{dominant}{stopness}{''.join(clauses)}" if formalised else ""
     return {"poemId": poem_id, "lineSuggestions": results, "dominantMeter": dominant, "alternatives": alternatives,
-            "distribution": dict(meters), "heterometryPossible": len(meters) > 1, "suggestedSegments": [],
-            "metadataSuggestion": {"meter": dominant or "", "formula": formula, "stopness": stopness},
-            "warnings": list(dict.fromkeys(warnings)), "reviewLineIds": [r["lineId"] for r in results if r["quality"] in {"ambiguous", "insufficient"}], "sourceSignature": signature}
+            "distribution": dict(meters), "heterometryPossible": len(outliers) >= max(2, len(results)//3), "suggestedSegments": [],
+            "metadataSuggestion": {"meter": dominant if formalised else "", "formula": formula, "stopness": stopness,
+                                   "sourceSignature":signature,"state":"pending","explanation":"Формализация подтверждена." if formalised else "Недостаточно правил: заполните метаданные вручную."},
+            "warnings": warnings, "reviewLineIds": [r["lineId"] for r in results if r["quality"] in {"ambiguous", "insufficient"}], "sourceSignature": signature, "state":"pending"}
+
+def analyse_poem(poem_id: str, lines: list[dict]) -> dict:
+    return summarise_poem(poem_id, [{"lineId": str(line.get("id")), **analyse_line(line.get("text", ""))} for line in lines])

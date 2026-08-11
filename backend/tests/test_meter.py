@@ -35,5 +35,23 @@ def test_violations_anacrusis_and_empty():
 def test_poem_signature_order_and_warnings():
     poem=analyse_poem("p",[{"id":"2","text":"а` ба ба` ба ба ба`"},{"id":"1","text":"а` ба ба ба ба ба` ба` ¦"}])
     assert poem["lineSuggestions"][0]["lineId"] == "2" and poem["sourceSignature"]
-    assert "R017" in poem["warnings"] and "R011" in poem["warnings"]
+    assert {w["rule"] for w in poem["warnings"]} >= {"R011","R017"}
     assert set(poem) >= {"metadataSuggestion","distribution","reviewLineIds","suggestedSegments"}
+
+def test_shared_safe_tokenizer_keeps_internal_accents_and_boundaries():
+    from app.stress import WORD
+    samples=["моро`з","пого`да","говори`т","Моро`з — пого`да","се`веро-запа`дный","мѣ`сяцъ","моро`з¦"]
+    for text in samples:
+        result=analyse_line(text)
+        expected=[(m.start(),m.end(),m.group()) for m in WORD.finditer(text)]
+        actual=[(w["start"],w["end"],w["text"]) for w in result["words"]]
+        assert actual==expected
+        assert all(s["start"]>=actual[s["wordIndex"]][0] and s["end"]<=actual[s["wordIndex"]][1] for s in result["syllables"])
+
+def test_all_quality_categories_and_accentual_is_never_exact():
+    assert analyse_line("а` а`")["quality"]=="exact"
+    accentual=analyse_line("а` ба ба ба ба ба` ба`")
+    assert accentual["quality"]=="probable" and accentual["selected"]["meter"]=="Ак"
+    assert accentual["selected"]["violations"] and not accentual["selected"]["regular"]
+    assert analyse_line("а` ба ба` ба ба ба`")["quality"]=="ambiguous"
+    assert analyse_line("молоко")["quality"]=="insufficient"
