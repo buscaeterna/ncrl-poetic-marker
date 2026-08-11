@@ -130,6 +130,12 @@ export type ImportedPoem = {
   meterWorkSuggestion?: {sourceSignature:string;state:"pending"|"accepted"|"rejected"|"stale";observedClauseSequence?:string[];metadataSuggestion:{meter:string;formula:string;stopness:string;clause?:string;clauseSequence?:string[];sourceSignature:string;state:string;acceptedFields?:string[];explanation:string};warnings:Array<{rule:string;message:string}>};
 };
 
+export function invalidateMeterWorkSuggestion(poem:ImportedPoem):ImportedPoem {return poem.meterWorkSuggestion?{...poem,meterWorkSuggestion:{...poem.meterWorkSuggestion,state:"stale"}}:poem}
+export function replacePoemLines(poem:ImportedPoem,lines:CorpusLine[]):ImportedPoem {
+  const sourceChanged=poem.lines.length!==lines.length||poem.lines.some((line,index)=>line.id!==lines[index]?.id||line.text!==lines[index]?.text);
+  const updated={...poem,lines};return sourceChanged?invalidateMeterWorkSuggestion(updated):updated;
+}
+
 export type ImportedCorpus = {
   id: string;
   name: string;
@@ -240,7 +246,7 @@ export function importCorpusBytes(bytes: ArrayBuffer | Uint8Array, name: string,
 export function exportPoem(poem: ImportedPoem, renderedLines?: CorpusLine[]) {
   if (!poem.modified) return poem.originalHtml;
   const lines = renderedLines ?? poem.lines;
-  const accepted=poem.editorMetadata?effectiveMetadata(poem.editorMetadata,{meter:"",formula:"",stopness:""}):null;
+  const accepted=poem.editorMetadata?effectiveMetadata(poem.editorMetadata,{meter:poem.fields["метр"]??"",formula:poem.fields["формула"]??"",stopness:poem.fields["стопность"]??""}):null;
   const fields = { ...poem.fields, ...(accepted?{"метр":accepted.meter,"формула":accepted.formula,"стопность":accepted.stopness,"клаузула":accepted.clausula}:{}), author: poem.author, title: poem.title, date: poem.date, "цикл": poem.cycle };
   const head = Object.entries(fields).filter(([key]) => ["author", "title", "date"].includes(key))
     .map(([key, value]) => `<meta name='${esc(key)}' content='${esc(value)}'>`);

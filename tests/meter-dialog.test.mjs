@@ -1,6 +1,6 @@
 import test from "node:test";import assert from "node:assert/strict";
-import {applyWorkMetadata,bulkAcceptExact,canBulkAcceptMeter,invalidateWorkSuggestion,poemMeterSignature,recoverMeterJob,restoreWorkMetadata,updateLineInterpretation,validateManualLine} from "../app/meter-dialog.tsx";
-import {acceptMeterSuggestion,exportCorpus,exportPoem,METER_ANALYZER_VERSION,restoreImportedAnnotation,sha256Text} from "../app/corpus.ts";
+import {applyWorkMetadata,bulkAcceptExact,canApplyWorkMetadata,canBulkAcceptMeter,invalidateWorkSuggestion,poemMeterSignature,recoverMeterJob,restoreWorkMetadata,updateLineInterpretation,validateManualLine} from "../app/meter-dialog.tsx";
+import {acceptMeterSuggestion,exportCorpus,exportPoem,METER_ANALYZER_VERSION,replacePoemLines,restoreImportedAnnotation,sha256Text} from "../app/corpus.ts";
 test("meter dialog restores active and terminal job states",()=>{
  for(const status of ["running","succeeded","cancelled","failed"]){const jobs=[{id:"x",type:"meter_analysis",status,progress:0,error:null}];assert.equal(recoverMeterJob(jobs).status,status)}
  assert.equal(recoverMeterJob([{id:"old",type:"meter_analysis",status:"succeeded",progress:1,error:null},{id:"new",type:"meter_analysis",status:"running",progress:0,error:null}]).id,"new");
@@ -22,7 +22,7 @@ test("work metadata is viewed/applied fieldwise and imported values are restorab
  const accepted=applyWorkMetadata(poem,"meter");assert.equal(accepted.editorMetadata.meter.manual,"Тк");assert.equal(accepted.editorMetadata.meter.original,"импорт");assert.deepEqual(accepted.meterWorkSuggestion.metadataSuggestion.acceptedFields,["meter"]);
  const restored=restoreWorkMetadata(accepted,"meter");assert.equal(restored.editorMetadata.meter.manual,undefined);assert.equal(restored.editorMetadata.meter.original,"импорт");
  assert.deepEqual(restored.meterWorkSuggestion.metadataSuggestion.acceptedFields,[]);assert.equal(restored.meterWorkSuggestion.metadataSuggestion.state,"pending");
- const stale={...poem,meterWorkSuggestion:{...poem.meterWorkSuggestion,state:"stale"}};assert.equal(applyWorkMetadata(stale,"meter"),stale);
+ const stale={...poem,meterWorkSuggestion:{...poem.meterWorkSuggestion,state:"stale"}};assert.equal(canApplyWorkMetadata(stale),false);assert.equal(applyWorkMetadata(stale,"meter"),stale);
 });
 const completePoem=(line,extra={})=>({id:"p",corpusId:"c",sourceName:"p.htm",sourceOrder:0,author:"",title:"P",date:"????",cycle:"",fields:{"метр":"старый","формула":"старая","стопность":"3","клаузула":"ж"},structures:[{kind:"verse",html:"<p class=verse>а` а`</p>",lines:["а` а`"]}],originalHtml:"<html><head>@метр старый\n@формула старая\n@стопность 3</head><body><p class=verse>а` а`</p></body></html>",lines:[line],status:"ready",dirty:false,modified:false,...extra});
 test("bulk exact acceptance changes only eligible poems and immediately exports line annotation",()=>{
@@ -45,4 +45,17 @@ test("alternative/manual/restore interpretation invalidates work summary",()=>{
  assert.equal(invalidateWorkSuggestion(base).meterWorkSuggestion.state,"stale");
  const manual=updateLineInterpretation(base,"l",line=>({...line,meter:"Х",annotationSource:"manual"}));assert.equal(manual.meterWorkSuggestion.state,"stale");assert.equal(manual.lines[0].meter,"Х");
  const restored=updateLineInterpretation(manual,"l",restoreImportedAnnotation);assert.equal(restored.meterWorkSuggestion.state,"stale");assert.equal(restored.lines[0].meter,"Я");
+});
+test("text edits and line composition changes stale the poem suggestion",()=>{
+ const line={id:"l",text:"строка",meter:"",feet:0,clause:"м",scheme:"",starred:false,breakBefore:false,note:""},work={sourceSignature:"x",state:"pending",warnings:[],metadataSuggestion:{meter:"Я",formula:"",stopness:"4",sourceSignature:"x",state:"pending",explanation:""}},poem=completePoem(line,{meterWorkSuggestion:work});
+ assert.equal(replacePoemLines(poem,[{...line,text:"правка"}]).meterWorkSuggestion.state,"stale");
+ assert.equal(replacePoemLines(poem,[line,{...line,id:"new"}]).meterWorkSuggestion.state,"stale");
+ assert.equal(replacePoemLines(poem,[]).meterWorkSuggestion.state,"stale");
+});
+test("raw editor metadata falls back to computed fields and manual still wins",()=>{
+ const line={id:"l",text:"строка",meter:"",feet:0,clause:"м",scheme:"",starred:false,breakBefore:false,note:""};
+ const poem=completePoem(line,{rawText:true,modified:true,fields:{"метр":"Я","формула":"Я4м","стопность":"4","клаузула":"м"},editorMetadata:{meter:{},formula:{},stopness:{},clausula:"м",rhyme:"",effects:[],strophe:"0",graphicStrophe:"",mode:"auto"}});
+ const html=exportPoem(poem);assert.match(html,/@метр Я/);assert.match(html,/@формула Я4м/);assert.match(html,/@стопность 4/);
+ assert.match(exportCorpus({id:"c",name:"c",encoding:"utf-8",order:0,eol:"\n"},[poem]),/@формула Я4м/);
+ const manual={...poem,editorMetadata:{...poem.editorMetadata,meter:{manual:"Х"}}};assert.match(exportPoem(manual),/@метр Х/);
 });

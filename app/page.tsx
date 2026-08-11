@@ -1,7 +1,7 @@
 "use client";
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
-import { decodeCorpus, editLineText, encodeCorpus, exportCorpusBytes, exportPoem, importCorpusBytes, splitCorpus, type ImportedCorpus, type ImportedPoem, type LineAnnotation, type MeterSuggestion, type ProcessingStatus, type StressSuggestion } from "./corpus";
+import { decodeCorpus, editLineText, encodeCorpus, exportCorpusBytes, exportPoem, importCorpusBytes, invalidateMeterWorkSuggestion, replacePoemLines, splitCorpus, type ImportedCorpus, type ImportedPoem, type LineAnnotation, type MeterSuggestion, type ProcessingStatus, type StressSuggestion } from "./corpus";
 import { loadWorkspace, saveWorkspace } from "./corpus-db";
 import { RawImportDialog } from "./raw-import-dialog";
 import { PdfImportDialog } from "./pdf-import-dialog";
@@ -12,7 +12,7 @@ import { RuntimeIndicator } from "./runtime-indicator";
 import { ProjectsDialog, type ServerProject } from "./projects-dialog";
 import { effectiveMetadata, metadataFromFields, restoreOriginalValue, setManualValue, type AutomaticMetadata, type DocumentMode, type EditorMetadata, type MetadataKey } from "./editor-metadata";
 import { StressDialog } from "./stress-dialog";
-import { invalidateWorkSuggestion, MeterDialog } from "./meter-dialog";
+import { MeterDialog } from "./meter-dialog";
 
 type Clause = "м" | "ж" | "д" | "г";
 type Meter = "" | "Я" | "Х" | "Д" | "Ан" | "Аф" | "Дк" | "Тк" | "Ак" | "О";
@@ -376,7 +376,8 @@ export default function Home() {
             "строфика": effective.strophe, "гр_строфика": effective.graphicStrophe },
         };
         const interpretationChanged=next.lines.some(line=>{const previous=poem.lines.find(item=>item.id===line.id);return previous&&(previous.meter!==line.meter||previous.feet!==line.feet||previous.clause!==line.clause)});
-        return interpretationChanged?invalidateWorkSuggestion(updated):updated;
+        const withLines=replacePoemLines(updated,next.lines);
+        return interpretationChanged?invalidateMeterWorkSuggestion(withLines):withLines;
       }));
       return next;
     });

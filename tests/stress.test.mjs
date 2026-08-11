@@ -68,3 +68,14 @@ test("a new analysis can start after a recovered cancelled or succeeded job",asy
  assert.equal(canStartStressJob({status:"cancelled"}),true);
  assert.equal(canStartStressJob({status:"succeeded"}),true);
 });
+
+test("all stress text acceptance paths stale the poem-level meter summary",async()=>{
+ const {updateStressLine}=await import("../app/stress-dialog.tsx"),work={sourceSignature:"old",state:"pending",warnings:[],metadataSuggestion:{meter:"Я",formula:"",stopness:"4",sourceSignature:"old",state:"pending",explanation:""}};
+ const poem={id:"p",lines:[line],dirty:false,modified:false,meterWorkSuggestion:work};
+ assert.equal(updateStressLine(poem,"l",acceptStressSuggestion).meterWorkSuggestion.state,"stale");
+ const batch=[poem,{...poem,id:"p2"}].map(item=>updateStressLine(item,"l",acceptStressSuggestion));assert.ok(batch.every(item=>item.meterWorkSuggestion.state==="stale"));
+ const wordLine={...line,stressSuggestion:{...line.stressSuggestion,words:[{original:"погода",normalized:"погода",position:3,confidence:1,alternatives:[],ambiguous:false,source:"dictionary"}]}};
+ assert.equal(updateStressLine({...poem,lines:[wordLine]},"l",value=>acceptStressWord(value,0)).meterWorkSuggestion.state,"stale");
+ assert.equal(updateStressLine(poem,"l",value=>editLineText(value,"ручная правка")).meterWorkSuggestion.state,"stale");
+ assert.equal(updateStressLine({...poem,lines:[{...line,text:"пого`да"}]},"l",value=>editLineText(value,"погода")).meterWorkSuggestion.state,"stale");
+});
