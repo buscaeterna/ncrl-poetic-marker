@@ -126,7 +126,7 @@ export type ImportedPoem = {
   rawText?: boolean;
   /** Import provenance is editor state and is deliberately omitted from HTML export. */
   provenance?: {sourceDocumentId:string;sourcePdfName:string;pageRange:string;usedOcr:boolean;confirmedAt:string};
-  meterWorkSuggestion?: {sourceSignature:string;state:"pending"|"accepted"|"rejected"|"stale";metadataSuggestion:{meter:string;formula:string;stopness:string;sourceSignature:string;state:string;explanation:string};warnings:Array<{rule:string;message:string}>};
+  meterWorkSuggestion?: {sourceSignature:string;state:"pending"|"accepted"|"rejected"|"stale";observedClauseSequence?:string[];metadataSuggestion:{meter:string;formula:string;stopness:string;clause?:string;clauseSequence?:string[];sourceSignature:string;state:string;acceptedFields?:string[];explanation:string};warnings:Array<{rule:string;message:string}>};
 };
 
 export type ImportedCorpus = {

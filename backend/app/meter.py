@@ -89,37 +89,53 @@ def analyse_line(text: str) -> dict:
 def source_signature(results: list[dict]) -> str:
     return hashlib.sha256("\n".join(f"{r['lineId']}:{r['sourceHash']}" for r in results).encode()).hexdigest()
 
+def suggestion_is_current(result: dict) -> bool:
+    return (result.get("state") in {"pending", "accepted"} and result.get("analyzerVersion") == VERSION
+            and result.get("sourceText") is not None
+            and result.get("sourceHash") == hashlib.sha256(result["sourceText"].encode()).hexdigest())
+
 def summarise_poem(poem_id: str, results: list[dict]) -> dict:
     """Use a stable line majority only as explainable context, never as proof."""
-    initial = [r["selected"]["meter"] for r in results if r.get("selected") and r["quality"] != "insufficient"]
+    current = [r for r in results if suggestion_is_current(r)]
+    excluded = [r.get("lineId") for r in results if not suggestion_is_current(r)]
+    # An ambiguous line is an observation, not independent evidence.  Likewise a
+    # candidate resolved by an earlier poem context cannot bootstrap that context.
+    basis = [r for r in current if r.get("selected") and r.get("quality") in {"exact", "probable"} and not r.get("contextResolved")]
+    initial = [r["selected"]["meter"] for r in basis]
     dominant = Counter(initial).most_common(1)[0][0] if initial else None
-    for result in results:
+    for result in current:
         matching = [c for c in result["candidates"] if c["meter"] == dominant]
-        if result["quality"] == "ambiguous" and matching:
+        if dominant and result["quality"] == "ambiguous" and matching:
             result["selected"] = matching[0]; result["quality"] = "probable"
+            result["contextResolved"] = True
             result["explanation"] += f" Контекст произведения поддерживает {dominant}; требуется проверка."
-    meters = Counter(r["selected"]["meter"] for r in results if r.get("selected"))
-    dominant = meters.most_common(1)[0][0] if meters else None
+    meters = Counter(r["selected"]["meter"] for r in current if r.get("selected") and r["quality"] != "ambiguous")
     warnings = [{"rule":"R011","message":"Применён приоритет регулярных интерпретаций."}]
-    outliers = [r for r in results if r.get("selected") and r["selected"]["meter"] != dominant]
-    if dominant == "Дк" and any(r["selected"] and r["selected"]["meter"] == "Ак" for r in results): warnings.append({"rule":"R012","message":"Ак внутри дольникового каркаса следует повторно проверить как Дк."})
-    if any(r.get("selected") and (r["selected"]["anacrusis"] > 2 or any(v.get("kind")=="irregular_intervals" for v in r["selected"]["violations"])) for r in results): warnings.append({"rule":"R013","message":"Анакруса или длинный интервал не создают дополнительный икт автоматически."})
-    if outliers and len(outliers) < max(2, len(results)//3): warnings += [{"rule":"R014","message":"Единичное отклонение не разрушает устойчивый каркас."},{"rule":"R015","message":"Не назначать Вл по единичному отклонению."}]
-    if len(outliers) >= max(2, len(results)//3): warnings.append({"rule":"R016","message":"Самостоятельность частей не формализована; требуется manual_review."})
-    if any("¦" in r["sourceText"] for r in results): warnings.append({"rule":"R017","message":"Виртуальное объединение графических фрагментов требует manual_review."})
-    signature = source_signature(results)
+    if excluded: warnings.append({"rule":"manual_review","message":"Устаревшие, отклонённые или несовместимые предложения исключены из сводки."})
+    if not basis: warnings.append({"rule":"manual_review","message":"Нет независимых exact/probable строк для определения доминирующего метра."})
+    outliers = [r for r in current if dominant and r.get("selected") and r["quality"] != "ambiguous" and r["selected"]["meter"] != dominant]
+    if dominant == "Дк" and any(r.get("selected") and r["selected"]["meter"] == "Ак" for r in current): warnings.append({"rule":"R012","message":"Ак внутри дольникового каркаса следует повторно проверить как Дк."})
+    if any(r.get("selected") and (r["selected"]["anacrusis"] > 2 or any(v.get("kind")=="irregular_intervals" for v in r["selected"]["violations"])) for r in current): warnings.append({"rule":"R013","message":"Анакруса или длинный интервал не создают дополнительный икт автоматически."})
+    if outliers: warnings += [{"rule":"R014","message":"Наблюдаются отклонения; их статус требует ручного решения."},{"rule":"R015","message":"Не назначать Вл по отдельным отклонениям."},{"rule":"R016","message":"Гетерометрия/полиметрия не выводится числовым порогом; требуется manual_review."}]
+    if any("¦" in r["sourceText"] for r in current): warnings.append({"rule":"R017","message":"Виртуальное объединение графических фрагментов требует manual_review."})
+    signature = source_signature(current)
     alternatives = [m for m, _ in meters.most_common() if m != dominant]
-    exact_feet = [r["selected"]["feetOrIctuses"] for r in results if r["selected"] and r["selected"]["meter"] == dominant]
+    exact_feet = [r["selected"]["feetOrIctuses"] for r in current if r.get("selected") and r["selected"]["meter"] == dominant]
     uniform_feet = len(set(exact_feet)) == 1
-    clauses = sorted({r["clause"] for r in results if r.get("selected") and r["selected"]["meter"] == dominant and r["clause"]})
-    formalised = bool(dominant and not outliers and uniform_feet and all(r["quality"] in {"exact","probable"} for r in results))
+    clauses = [r["clause"] for r in current if r.get("selected") and r["selected"]["meter"] == dominant and r.get("clause")]
+    uniform_clause = len(set(clauses)) == 1
+    formalised = bool(dominant and not excluded and not outliers and uniform_feet and all(r["quality"] in {"exact","probable"} for r in current))
     stopness = str(exact_feet[0]) if formalised and exact_feet else ""
-    formula = f"{dominant}{stopness}{''.join(clauses)}" if formalised else ""
+    # No confirmed source defines compression of an alternating clausula sequence.
+    # Preserve the observed order separately and only emit a formula for uniformity.
+    formula = f"{dominant}{stopness}{clauses[0]}" if formalised and uniform_clause and clauses else ""
+    if formalised and not uniform_clause: warnings.append({"rule":"manual_review","message":"Порядок клаузул сохранён, но формат цикла не подтверждён; @формула оставлена пустой."})
     return {"poemId": poem_id, "lineSuggestions": results, "dominantMeter": dominant, "alternatives": alternatives,
-            "distribution": dict(meters), "heterometryPossible": len(outliers) >= max(2, len(results)//3), "suggestedSegments": [],
+            "distribution": dict(meters), "heterometryPossible": None, "suggestedSegments": [], "observedClauseSequence": clauses,
             "metadataSuggestion": {"meter": dominant if formalised else "", "formula": formula, "stopness": stopness,
-                                   "sourceSignature":signature,"state":"pending","explanation":"Формализация подтверждена." if formalised else "Недостаточно правил: заполните метаданные вручную."},
-            "warnings": warnings, "reviewLineIds": [r["lineId"] for r in results if r["quality"] in {"ambiguous", "insufficient"}], "sourceSignature": signature, "state":"pending"}
+                                   "clause":clauses[0] if formalised and uniform_clause and clauses else "", "clauseSequence":clauses,
+                                   "sourceSignature":signature,"state":"pending","acceptedFields":[],"explanation":"Формализация подтверждена." if formalised else "Недостаточно правил: заполните метаданные вручную."},
+            "warnings": warnings, "excludedLineIds":excluded, "reviewLineIds": [r["lineId"] for r in results if r["quality"] in {"ambiguous", "insufficient"}], "sourceSignature": signature, "state":"pending"}
 
 def analyse_poem(poem_id: str, lines: list[dict]) -> dict:
     return summarise_poem(poem_id, [{"lineId": str(line.get("id")), **analyse_line(line.get("text", ""))} for line in lines])

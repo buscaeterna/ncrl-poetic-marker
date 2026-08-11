@@ -1,4 +1,4 @@
-from app.meter import VERSION, analyse_line, analyse_poem
+from app.meter import VERSION, analyse_line, analyse_poem, summarise_poem
 
 def meters(text): return [c["meter"] for c in analyse_line(text)["candidates"]]
 
@@ -55,3 +55,29 @@ def test_all_quality_categories_and_accentual_is_never_exact():
     assert accentual["selected"]["violations"] and not accentual["selected"]["regular"]
     assert analyse_line("а` ба ба` ба ба ба`")["quality"]=="ambiguous"
     assert analyse_line("молоко")["quality"]=="insufficient"
+
+def line_result(line_id, text, **changes):
+    return {"lineId":line_id, **analyse_line(text), **changes}
+
+def test_all_ambiguous_poem_has_no_artificial_dominant_meter():
+    poem=summarise_poem("p",[line_result("1","ма`ма мы`ла ра`му"),line_result("2","луна` светла` всегда`")])
+    assert poem["dominantMeter"] is None
+    assert all(line["quality"]=="ambiguous" for line in poem["lineSuggestions"])
+    assert poem["metadataSuggestion"]["meter"]==""
+
+def test_clause_order_is_preserved_and_unconfirmed_cycle_has_no_formula():
+    first=line_result("1","а` а`",clause="м")
+    second=line_result("2","а` а`",clause="ж")
+    poem=summarise_poem("p",[first,second])
+    assert poem["observedClauseSequence"]==["м","ж"]
+    assert poem["metadataSuggestion"]["clauseSequence"]==["м","ж"]
+    assert poem["metadataSuggestion"]["formula"]==""
+    assert any(w["rule"]=="manual_review" for w in poem["warnings"])
+
+def test_no_numeric_polymetry_threshold_and_stale_does_not_influence_summary():
+    exact=line_result("1","а` а`")
+    stale=line_result("2","а` ба ба ба ба ба` ба`",state="stale")
+    poem=summarise_poem("p",[exact,stale])
+    assert poem["dominantMeter"]=="Тк" and poem["heterometryPossible"] is None
+    assert poem["distribution"]=={"Тк":1} and poem["excludedLineIds"]==["2"]
+    assert poem["metadataSuggestion"]["meter"]==""
