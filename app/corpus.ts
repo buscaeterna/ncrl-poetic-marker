@@ -1,3 +1,4 @@
+import { effectiveMetadata } from "./editor-metadata";
 export type SourceEncoding = "utf-8" | "windows-1251";
 export type ProcessingStatus = "unprocessed" | "processing" | "ready" | "review" | "error";
 
@@ -13,7 +14,16 @@ export type CorpusLine = {
   note: string;
   /** A machine result is review data only; exporters continue to use `text`. */
   stressSuggestion?: StressSuggestion;
+  meterSuggestion?: MeterSuggestion;
+  /** Immutable annotation parsed from the source; survives manual/automatic overrides. */
+  importedAnnotation?: LineAnnotation;
+  annotationSource?: "imported"|"manual"|"accepted";
 };
+export type LineAnnotation={meter:string;feet:number;clause:"м"|"ж"|"д"|"г";scheme:string;starred:boolean};
+export const METER_ANALYZER_VERSION="meter-1.0.0";
+
+export type MeterCandidate = { meter:string; feetOrIctuses:number; ictusPositions:number[]; anacrusis:number; ictusOmissions:number[]; weakStresses:number[]; violations:Array<Record<string,unknown>>; regular:boolean };
+export type MeterSuggestion = { sourceText:string; sourceHash:string; analyzerVersion:string; syllables:Array<{index:number;text:string;start:number;end:number;wordIndex:number;stress:"stressed"|"unstressed"|"unknown"}>; words:Array<Record<string,unknown>>; accentSequence:string; candidates:MeterCandidate[]; selected:MeterCandidate|null; clause:"м"|"ж"|"д"|"г"|null; unknownWords:Array<Record<string,unknown>>; explanation:string; quality:"exact"|"probable"|"ambiguous"|"insufficient"; state:"pending"|"accepted"|"rejected"|"stale"; analysedAt:string; warnings:string[] };
 
 export type StressWord = {
   original: string; normalized: string; position: number | null; confidence: number;
@@ -52,7 +62,7 @@ export function acceptStressSuggestion(line: CorpusLine): CorpusLine {
   if (!suggestion || !stressSuggestionIsCurrent(line)) return line;
   const proposed=[...suggestion.suggestedText.matchAll(stressToken)];let index=0;
   const text=line.text.replace(stressToken,(token)=>{const candidate=proposed[index++]?.[0];return token.includes("`")?token:(candidate??token)});
-  return { ...line, text, stressSuggestion: { ...suggestion, state: "accepted" } };
+  return staleMeter({ ...line, text, stressSuggestion: { ...suggestion, state: "accepted" } });
 }
 
 const stressToken = /[А-Яа-яЁёІіѢѣ](?:[А-Яа-яЁёІіѢѣ]|(?<=[аеёиоуыэюяАЕЁИОУЫЭЮЯѢѣ])`)*(?:-[А-Яа-яЁёІіѢѣ](?:[А-Яа-яЁёІіѢѣ]|(?<=[аеёиоуыэюяАЕЁИОУЫЭЮЯѢѣ])`)*)*/gu;
@@ -65,14 +75,28 @@ export function acceptStressWord(line: CorpusLine, wordIndex: number, position?:
   if(chosen===null||chosen<0||chosen>=match[0].length)return line;
   const token=match[0].slice(0,chosen+1)+"`"+match[0].slice(chosen+1);
   const text=line.text.slice(0,match.index)+token+line.text.slice(match.index!+match[0].length);
-  return {...line,text,stressSuggestion:{...suggestion,acceptedWords:[...acceptedChoices(suggestion),{wordIndex,position:chosen}]}};
+  return staleMeter({...line,text,stressSuggestion:{...suggestion,acceptedWords:[...acceptedChoices(suggestion),{wordIndex,position:chosen}]}});
 }
+
+const staleMeter=(line:CorpusLine):CorpusLine=>line.meterSuggestion&&line.meterSuggestion.sourceText!==line.text?{...line,meterSuggestion:{...line.meterSuggestion,state:"stale"}}:line;
 
 export function editLineText(line: CorpusLine, text: string): CorpusLine {
   const suggestion = line.stressSuggestion;
+  const meterSuggestion=line.meterSuggestion;
   return { ...line, text, stressSuggestion: suggestion && suggestion.sourceText !== text
-    ? { ...suggestion, state: "stale" } : suggestion };
+    ? { ...suggestion, state: "stale" } : suggestion, meterSuggestion: meterSuggestion && meterSuggestion.sourceText !== text ? {...meterSuggestion,state:"stale"} : meterSuggestion };
 }
+
+/** Explicit application; a suggestion never affects export while pending. */
+export function meterSuggestionIsCurrent(line:CorpusLine):boolean {const s=line.meterSuggestion;return !!s&&s.state!=="stale"&&s.analyzerVersion===METER_ANALYZER_VERSION&&s.sourceText===line.text&&s.sourceHash===sha256Text(line.text)}
+export function acceptMeterSuggestion(line:CorpusLine,candidate=line.meterSuggestion?.selected):CorpusLine {
+  const suggestion=line.meterSuggestion;
+  if(!suggestion||!candidate||!meterSuggestionIsCurrent(line))return line;
+  return {...line,meter:candidate.meter,feet:candidate.feetOrIctuses,clause:suggestion.clause??line.clause,
+    annotationSource:"accepted",meterSuggestion:{...suggestion,selected:candidate,state:"accepted"}};
+}
+export function rejectMeterSuggestion(line:CorpusLine):CorpusLine {return line.meterSuggestion?{...line,meterSuggestion:{...line.meterSuggestion,state:"rejected"}}:line}
+export function restoreImportedAnnotation(line:CorpusLine):CorpusLine {const a=line.importedAnnotation;return a?{...line,...a,annotationSource:"imported"}:line}
 
 export type StructuralElement = {
   kind: "H1" | "H2" | "H3" | "date" | "epigraf" | "verse";
@@ -103,7 +127,19 @@ export type ImportedPoem = {
   rawText?: boolean;
   /** Import provenance is editor state and is deliberately omitted from HTML export. */
   provenance?: {sourceDocumentId:string;sourcePdfName:string;pageRange:string;usedOcr:boolean;confirmedAt:string};
+  meterWorkSuggestion?: {sourceSignature:string;state:"pending"|"accepted"|"rejected"|"stale";observedClauseSequence?:string[];metadataSuggestion:{meter:string;formula:string;stopness:string;clause?:string;clauseSequence?:string[];sourceSignature:string;state:string;acceptedFields?:string[];explanation:string};warnings:Array<{rule:string;message:string}>};
 };
+
+export function invalidateMeterWorkSuggestion(poem:ImportedPoem):ImportedPoem {return poem.meterWorkSuggestion?{...poem,meterWorkSuggestion:{...poem.meterWorkSuggestion,state:"stale"}}:poem}
+export function replacePoemLines(poem:ImportedPoem,lines:CorpusLine[]):ImportedPoem {
+  const sourceChanged=poem.lines.length!==lines.length||poem.lines.some((line,index)=>line.id!==lines[index]?.id||line.text!==lines[index]?.text);
+  const updated={...poem,lines};return sourceChanged?invalidateMeterWorkSuggestion(updated):updated;
+}
+export function updatePoemFromEditor(poem:ImportedPoem,lines:CorpusLine[],patch:Partial<Omit<ImportedPoem,"lines">>):ImportedPoem {
+  const interpretationChanged=lines.some(line=>{const previous=poem.lines.find(item=>item.id===line.id);return !!previous&&(previous.meter!==line.meter||previous.feet!==line.feet||previous.clause!==line.clause)});
+  const withLines=replacePoemLines(poem,lines),updated={...withLines,...patch,lines};
+  return interpretationChanged?invalidateMeterWorkSuggestion(updated):updated;
+}
 
 export type ImportedCorpus = {
   id: string;
@@ -123,6 +159,13 @@ const entities = (value: string) => value
   .replace(/&quot;/gi, '"').replace(/&#39;/gi, "'").replace(/&amp;/gi, "&");
 const textLines = (html: string) => entities(html.replace(/<br\s*\/?\s*>/gi, "\n").replace(/<[^>]*>/g, ""))
   .split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+const lineTag=/^\s*<#([А-Яа-яЁё]+)(\*)?(\d+)([мждг])(?:\s+([^>]*))?>\s*/u;
+export function parseAnnotatedLine(value:string):{text:string;annotation?:LineAnnotation}{
+  const decoded=entities(value.replace(/<[^#][^>]*>/g,"")), match=decoded.match(lineTag);
+  if(!match)return{text:decoded.trim()};
+  return{text:decoded.slice(match[0].length).trim(),annotation:{meter:match[1],starred:!!match[2],feet:Number(match[3]),clause:match[4] as LineAnnotation["clause"],scheme:(match[5]??"").trim()}};
+}
+const annotatedLines=(html:string)=>html.replace(/<br\s*\/?\s*>/gi,"\n").split(/\r?\n/).map(parseAnnotatedLine).filter(x=>x.text);
 const esc = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/'/g, "&#39;");
 
 /** Strict UTF-8 first; TextDecoder's fatal mode guarantees that U+FFFD is never introduced. */
@@ -179,10 +222,13 @@ export function parsePoem(html: string, sourceName: string, sourceOrder: number,
     const legacy = structures.find((item) => item.kind === "H1" && item.lines.length > 1 && item.lines[0].trim() === title.trim());
     if (legacy) poetic = [{ ...legacy, lines: legacy.lines.slice(1) }];
   }
-  const lines = poetic.flatMap((stanza, stanzaIndex) => stanza.lines.map((text, lineIndex): CorpusLine => ({
-    id: id(), text, meter: "", feet: 0, clause: "м", scheme: "",
-    breakBefore: stanzaIndex > 0 && lineIndex === 0, starred: false, note: "",
-  })));
+  const lines = poetic.flatMap((stanza, stanzaIndex) => {
+    const raw=stanza.kind==="H1"?stanza.lines.map(parseAnnotatedLine):annotatedLines(stanza.html.replace(/^<p\b[^>]*>|<\/p\s*>$/gi,""));
+    return raw.map(({text,annotation}, lineIndex): CorpusLine => ({id:id(),text,meter:annotation?.meter??"",feet:annotation?.feet??0,
+      clause:annotation?.clause??"м",scheme:annotation?.scheme??"",starred:annotation?.starred??false,
+      importedAnnotation:annotation,annotationSource:annotation?"imported":undefined,
+      breakBefore:stanzaIndex>0&&lineIndex===0,note:""}));
+  });
   return {
     id: id(), corpusId, sourceName, sourceOrder, author: fields.author ?? "", title,
     date: fields.date ?? "????", cycle: fields["цикл"] ?? "", fields, structures, originalHtml: html,
@@ -205,7 +251,8 @@ export function importCorpusBytes(bytes: ArrayBuffer | Uint8Array, name: string,
 export function exportPoem(poem: ImportedPoem, renderedLines?: CorpusLine[]) {
   if (!poem.modified) return poem.originalHtml;
   const lines = renderedLines ?? poem.lines;
-  const fields = { ...poem.fields, author: poem.author, title: poem.title, date: poem.date, "цикл": poem.cycle };
+  const accepted=poem.editorMetadata?effectiveMetadata(poem.editorMetadata,{meter:poem.fields["метр"]??"",formula:poem.fields["формула"]??"",stopness:poem.fields["стопность"]??""}):null;
+  const fields = { ...poem.fields, ...(accepted?{"метр":accepted.meter,"формула":accepted.formula,"стопность":accepted.stopness,"клаузула":accepted.clausula}:{}), author: poem.author, title: poem.title, date: poem.date, "цикл": poem.cycle };
   const head = Object.entries(fields).filter(([key]) => ["author", "title", "date"].includes(key))
     .map(([key, value]) => `<meta name='${esc(key)}' content='${esc(value)}'>`);
   const authorTitle = poem.author.replace(/^(.+?)\s+((?:[А-ЯЁA-Z]\.?\s*){1,3})$/u, (_all, surname, initials) => `${initials.replace(/\s/g, "")} ${surname}`);

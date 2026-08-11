@@ -1,7 +1,7 @@
 "use client";
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
-import { decodeCorpus, encodeCorpus, exportCorpusBytes, exportPoem, importCorpusBytes, splitCorpus, type ImportedCorpus, type ImportedPoem, type ProcessingStatus, type StressSuggestion } from "./corpus";
+import { decodeCorpus, editLineText, encodeCorpus, exportCorpusBytes, exportPoem, importCorpusBytes, splitCorpus, updatePoemFromEditor, type ImportedCorpus, type ImportedPoem, type LineAnnotation, type MeterSuggestion, type ProcessingStatus, type StressSuggestion } from "./corpus";
 import { loadWorkspace, saveWorkspace } from "./corpus-db";
 import { RawImportDialog } from "./raw-import-dialog";
 import { PdfImportDialog } from "./pdf-import-dialog";
@@ -12,6 +12,7 @@ import { RuntimeIndicator } from "./runtime-indicator";
 import { ProjectsDialog, type ServerProject } from "./projects-dialog";
 import { effectiveMetadata, metadataFromFields, restoreOriginalValue, setManualValue, type AutomaticMetadata, type DocumentMode, type EditorMetadata, type MetadataKey } from "./editor-metadata";
 import { StressDialog } from "./stress-dialog";
+import { MeterDialog } from "./meter-dialog";
 
 type Clause = "м" | "ж" | "д" | "г";
 type Meter = "" | "Я" | "Х" | "Д" | "Ан" | "Аф" | "Дк" | "Тк" | "Ак" | "О";
@@ -27,6 +28,9 @@ type VerseLine = {
   starred: boolean;
   note: string;
   stressSuggestion?: StressSuggestion;
+  meterSuggestion?: MeterSuggestion;
+  importedAnnotation?: LineAnnotation;
+  annotationSource?: "imported"|"manual"|"accepted";
 };
 
 type DocumentState = {
@@ -310,6 +314,7 @@ export default function Home() {
   const [serverProject, setServerProject] = useState<ServerProject | null>(null);
   const [pdfOpen, setPdfOpen] = useState(false);
   const [stressOpen, setStressOpen] = useState(false);
+  const [meterOpen, setMeterOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const meta = useMemo(() => deriveMetadata(doc), [doc]);
   const issues = useMemo(() => validate(doc, meta), [doc, meta]);
@@ -363,20 +368,20 @@ export default function Home() {
         const editorMetadata = { ...next.metadata, mode: next.mode, effects: next.effects, strophe: next.strophe, graphicStrophe: next.graphicStrophe,
           rhyme: next.rhymeScheme ? `${next.rhyme} | ${next.rhymeScheme}` : next.rhyme };
         const effective = effectiveMetadata(editorMetadata, deriveAutomaticMetadata(next));
-        return {
-          ...poem, author: next.author, title: next.title, date: next.date, cycle: next.cycle,
-          lines: next.lines, dirty: true, modified: true, editorMetadata,
+        return updatePoemFromEditor(poem,next.lines,{
+          author: next.author, title: next.title, date: next.date, cycle: next.cycle,
+          dirty: true, modified: true, editorMetadata,
           fields: { ...poem.fields, "метр": effective.meter, "формула": effective.formula, "стопность": effective.stopness,
             "клаузула": effective.clausula, "рифма": effective.rhyme, "доп": effective.effects.join(", "),
             "строфика": effective.strophe, "гр_строфика": effective.graphicStrophe },
-        };
+        });
       }));
       return next;
     });
   };
   const patchDoc = (value: Partial<DocumentState>) => updateDoc((current) => ({ ...current, ...value }));
   const patchLine = (index: number, value: Partial<VerseLine>) => updateDoc((current) => ({
-    ...current, lines: current.lines.map((line, i) => i === index ? (value.text !== undefined ? { ...line, ...value, stressSuggestion: line.stressSuggestion && line.stressSuggestion.sourceText !== value.text ? { ...line.stressSuggestion, state: "stale" as const } : line.stressSuggestion } : { ...line, ...value }) : line),
+    ...current, lines: current.lines.map((line, i) => i === index ? (value.text !== undefined ? editLineText(line,value.text) as VerseLine : { ...line, ...value, annotationSource: (value.meter!==undefined||value.feet!==undefined||value.clause!==undefined||value.scheme!==undefined)?"manual":line.annotationSource }) : line),
   }));
   const patchMetadata = (key: MetadataKey, value: string) => updateDoc((current) => ({
     ...current, metadata: setManualValue(current.metadata, key, value),
@@ -507,6 +512,7 @@ export default function Home() {
           <button className="button secondary" onClick={() => fileRef.current?.click()}><Icon>↥</Icon>Импорт</button>
           {process.env.NEXT_PUBLIC_RUNTIME_MODE !== "static" && <button className="button secondary" onClick={() => setPdfOpen(true)}>Импорт PDF</button>}
           {process.env.NEXT_PUBLIC_RUNTIME_MODE !== "static" && <button className="button secondary" disabled={!serverProject} onClick={() => setStressOpen(true)}>Автоматические ударения</button>}
+          {process.env.NEXT_PUBLIC_RUNTIME_MODE !== "static" && <button className="button secondary" disabled={!serverProject} onClick={() => setMeterOpen(true)}>Метрический анализ</button>}
           <button className="button primary" onClick={download}><Icon>↓</Icon>Скачать HTML</button>
         </div>
       </header>
@@ -647,6 +653,7 @@ export default function Home() {
         }
       }} />}
       {stressOpen && serverProject && <StressDialog project={serverProject} workspace={{corpora, poems, activeId, queue}} onProject={setServerProject} onWorkspace={(workspace) => { setCorpora(workspace.corpora); setPoems(workspace.poems); setActiveId(workspace.activeId); setQueue(workspace.queue); const active=workspace.poems.find((poem)=>poem.id===workspace.activeId); if(active)setDoc(poemToDocument(active)); saveWorkspace(workspace); }} onClose={() => setStressOpen(false)} />}
+      {meterOpen && serverProject && <MeterDialog project={serverProject} workspace={{corpora, poems, activeId, queue}} onProject={setServerProject} onWorkspace={(workspace) => { setCorpora(workspace.corpora); setPoems(workspace.poems); setActiveId(workspace.activeId); setQueue(workspace.queue); const active=workspace.poems.find((poem)=>poem.id===workspace.activeId); if(active)setDoc(poemToDocument(active)); saveWorkspace(workspace); }} onClose={() => setMeterOpen(false)} />}
     </main>
   );
 }

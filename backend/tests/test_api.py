@@ -41,7 +41,7 @@ def test_health_capabilities_and_error_openapi():
     assert client.get("/api/v1/ready").status_code == 200
     assert client.get("/api/v1/capabilities").json() == {
         "workspace": True, "jobs": True, "pdf": True, "ocr": True,
-        "stress": True, "meter": False, "local_model": False,
+        "stress": True, "meter": True, "local_model": False,
     }
     schema = client.get("/api/openapi.json").json()
     error_schema = schema["components"]["schemas"]["ErrorEnvelope"]
@@ -92,6 +92,41 @@ def test_late_cancellation_never_applies_results(monkeypatch):
     assert client.get(f'/api/v1/jobs/{job["id"]}').json()["status"]=="cancelled"
     saved=client.get(f'/api/v1/projects/{project["id"]}').json()
     assert saved["revision"]==1 and "stressSuggestion" not in saved["workspace"]["poems"][0]["lines"][0]
+
+def meter_project(lines=None, poems=None):
+    data={**workspace,"poems":poems or [{**workspace["poems"][0],"lines":lines or [{"id":"l1","text":"ма`ма мы`ла ра`му"},{"id":"l2","text":"луна` светла` всегда`"}]}]}
+    return client.post("/api/v1/projects",json={"name":"Meter","workspace":data}).json()
+
+def test_meter_job_api_validates_revision_version_selection_and_active_job():
+    project=meter_project();url=f'/api/v1/projects/{project["id"]}/meter/jobs';base={"poem_ids":["p"],"revision":1,"analyzer_version":"meter-1.0.0"}
+    assert_error(client.post(url,json={**base,"revision":2}),409,"revision_conflict")
+    assert_error(client.post(url,json={**base,"analyzer_version":"future"}),422,"analyzer_version_mismatch")
+    assert_error(client.post(url,json={**base,"poem_ids":["other"]}),422,"invalid_poem_selection")
+    assert_error(client.post(url,json={**base,"line_ids":["other"]}),422,"invalid_line_selection")
+    assert client.post(url,json={**base,"line_ids":[]}).status_code==422
+    created=client.post(url,json=base);assert created.status_code==202
+    assert_error(client.post(url,json=base),409,"meter_job_active")
+
+def test_meter_worker_preserves_poem_order_and_partial_analysis_does_not_replace_summary():
+    poems=[{"id":"p2","lines":[{"id":"b","text":"а` а`"}]},{"id":"p1","lines":[{"id":"a","text":"ма`ма мы`ла ра`му"}]}]
+    project=meter_project(poems=poems);url=f'/api/v1/projects/{project["id"]}/meter/jobs'
+    job=client.post(url,json={"poem_ids":["p1","p2"],"revision":1,"analyzer_version":"meter-1.0.0"}).json();assert process_one()
+    saved=client.get(f'/api/v1/projects/{project["id"]}').json();assert [p["id"] for p in saved["workspace"]["poems"]]==["p2","p1"]
+    original=saved["workspace"]["poems"][0]["meterWorkSuggestion"]["sourceSignature"]
+    partial=client.post(url,json={"poem_ids":["p2"],"line_ids":["b"],"revision":2,"analyzer_version":"meter-1.0.0"}).json();assert process_one()
+    again=client.get(f'/api/v1/projects/{project["id"]}').json();assert again["workspace"]["poems"][0]["meterWorkSuggestion"]["sourceSignature"]==original
+    assert client.get(f'/api/v1/jobs/{partial["id"]}').json()["status"]=="succeeded"
+
+def test_meter_late_cancel_does_not_write_workspace(monkeypatch):
+    from app.meter import analyse_line as real
+    project=meter_project(lines=[{"id":"l","text":"а` а`"}]);job=client.post(f'/api/v1/projects/{project["id"]}/meter/jobs',json={"poem_ids":["p"],"revision":1,"analyzer_version":"meter-1.0.0"}).json()
+    def cancel(text):
+        result=real(text)
+        with SessionLocal.begin() as db: db.get(Job,UUID(job["id"])).status=JobStatus.cancel_requested
+        return result
+    monkeypatch.setattr("app.worker.analyse_meter_line",cancel);assert process_one()
+    assert client.get(f'/api/v1/jobs/{job["id"]}').json()["status"]=="cancelled"
+    saved=client.get(f'/api/v1/projects/{project["id"]}').json();assert saved["revision"]==1 and "meterSuggestion" not in saved["workspace"]["poems"][0]["lines"][0]
 
 
 def test_project_crud_exact_roundtrip_and_revision_errors():

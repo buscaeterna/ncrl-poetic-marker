@@ -68,6 +68,7 @@ jobs:
           id=$(echo "$project" | jq -r .id)
           curl --fail "http://localhost:8080/api/v1/projects/$id"
           bash .github/scripts/container_pdf_smoke.sh
+          bash .github/scripts/container_meter_smoke.sh
       - name: PostgreSQL migration lifecycle
         run: |
           docker compose exec -T db createdb -U ncrl ncrl_migration_test
